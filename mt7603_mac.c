@@ -41,6 +41,35 @@ mt76_start_tx_ac(struct mt7603_dev *dev, u32 mask)
 	mt76_set(dev, MT_WF_ARB_TX_START_0, mt7603_ac_queue_mask0(mask));
 }
 
+void mt7603_mac_set_timing(struct mt7603_dev *dev)
+{
+	u32 cck = MT76_SET(MT_TIMEOUT_VAL_PLCP, 231) |
+		  MT76_SET(MT_TIMEOUT_VAL_CCA, 48);
+	u32 ofdm = MT76_SET(MT_TIMEOUT_VAL_PLCP, 60) |
+		   MT76_SET(MT_TIMEOUT_VAL_CCA, 24);
+	int offset = 3 * dev->coverage_class;
+	u32 reg_offset = MT76_SET(MT_TIMEOUT_VAL_PLCP, offset) |
+			 MT76_SET(MT_TIMEOUT_VAL_CCA, offset);
+	int sifs;
+	u32 val;
+
+	if (dev->chandef.chan->band == IEEE80211_BAND_5GHZ)
+		sifs = 16;
+	else
+		sifs = 10;
+
+	mt7603_mac_stop(dev);
+
+	mt76_wr(dev, MT_TIMEOUT_CCK, cck + reg_offset);
+	mt76_wr(dev, MT_TIMEOUT_OFDM, ofdm + reg_offset);
+	val = MT76_SET(MT_IFS_EIFS, 360) |
+	      MT76_SET(MT_IFS_RIFS, 2) |
+	      MT76_SET(MT_IFS_SIFS, sifs) |
+	      MT76_SET(MT_IFS_SLOT, dev->slottime);
+
+	mt7603_mac_start(dev);
+}
+
 static void
 mt7603_wtbl_update(struct mt7603_dev *dev, int idx, u32 mask)
 {
@@ -48,6 +77,13 @@ mt7603_wtbl_update(struct mt7603_dev *dev, int idx, u32 mask)
 		 MT76_SET(MT_WTBL_UPDATE_WLAN_IDX, idx) | mask);
 
 	mt76_poll(dev, MT_WTBL_UPDATE, MT_WTBL_UPDATE_BUSY, 0, 5000);
+}
+
+static u32
+mt7603_wtbl2_addr(int idx)
+{
+	/* Mapped to WTBL2 */
+	return MT_PCIE_REMAP_BASE_1 + idx * MT_WTBL2_SIZE;
 }
 
 void mt7603_wtbl_init(struct mt7603_dev *dev, int idx, const u8 *mac_addr)
@@ -92,8 +128,7 @@ void mt7603_wtbl_clear(struct mt7603_dev *dev, int idx)
 
 	mt76_clear(dev, MT_WTBL1_OR, MT_WTBL1_OR_PSM_WRITE);
 
-	/* Mapped to WTBL2 */
-	addr = MT_PCIE_REMAP_BASE_1 + idx * MT_WTBL2_SIZE;
+	addr = mt7603_wtbl2_addr(idx);
 
 	/* Clear BA information */
 	mt76_wr(dev, addr + (15 * 4), 0);
@@ -107,6 +142,22 @@ void mt7603_wtbl_clear(struct mt7603_dev *dev, int idx)
 	mt7603_wtbl_update(dev, idx, MT_WTBL_UPDATE_RX_COUNT_CLEAR);
 	mt7603_wtbl_update(dev, idx, MT_WTBL_UPDATE_TX_COUNT_CLEAR);
 	mt7603_wtbl_update(dev, idx, MT_WTBL_UPDATE_ADM_COUNT_CLEAR);
+}
+
+void mt7603_wtbl_update_cap(struct mt7603_dev *dev, struct ieee80211_sta *sta)
+{
+	struct mt7603_sta *msta = (struct mt7603_sta *) sta->drv_priv;
+	u32 addr = mt7603_wtbl2_addr(msta->wcid.idx);
+	u32 val;
+
+	val = mt76_rr(dev, addr + 9 * 4);
+	val &= ~(MT_WTBL2_W9_SHORT_GI_20 | MT_WTBL2_W9_SHORT_GI_40 |
+		 MT_WTBL2_W9_SHORT_GI_80);
+	if (sta->ht_cap.cap & IEEE80211_HT_CAP_SGI_20)
+		val |= MT_WTBL2_W9_SHORT_GI_20;
+	if (sta->ht_cap.cap & IEEE80211_HT_CAP_SGI_40)
+		val |= MT_WTBL2_W9_SHORT_GI_40;
+	mt76_wr(dev, addr + 9 * 4, val);
 }
 
 static int
@@ -236,15 +287,15 @@ mt7603_mac_fill_rx(struct mt7603_dev *dev, struct sk_buff *skb)
 
 static u16
 mt7603_mac_tx_rate_val(struct mt7603_dev *dev,
-		       const struct ieee80211_tx_rate *rate, u8 *nss, u8 *bw)
+		       const struct ieee80211_tx_rate *rate, bool stbc, u8 *bw)
 {
-	u8 phy, rate_idx;
+	u8 phy, nss, rate_idx;
+	u16 rateval;
 
-	*nss = 1;
 	*bw = 0;
 	if (rate->flags & IEEE80211_TX_RC_MCS) {
 		rate_idx = rate->idx;
-		*nss = 1 + (rate->idx >> 3);
+		nss = 1 + (rate->idx >> 3);
 		phy = MT_PHY_TYPE_HT;
 		if (rate->flags & IEEE80211_TX_RC_GREEN_FIELD)
 			phy = MT_PHY_TYPE_HT_GF;
@@ -255,6 +306,7 @@ mt7603_mac_tx_rate_val(struct mt7603_dev *dev,
 		int band = dev->chandef.chan->band;
 		u16 val;
 
+		nss = 1;
 		r = &mt76_hw(dev)->wiphy->bands[band]->bitrates[rate->idx];
 		if (rate->flags & IEEE80211_TX_RC_USE_SHORT_PREAMBLE)
 			val = r->hw_value_short;
@@ -265,23 +317,74 @@ mt7603_mac_tx_rate_val(struct mt7603_dev *dev,
 		rate_idx = val & 0xff;
 	}
 
-	return (MT76_SET(MT_TX_RATE_IDX, rate_idx) |
-		MT76_SET(MT_TX_RATE_MODE, phy));
+	rateval = (MT76_SET(MT_TX_RATE_IDX, rate_idx) |
+		   MT76_SET(MT_TX_RATE_MODE, phy));
+
+	if (stbc && nss == 1)
+		rateval |= MT_TX_RATE_STBC;
+
+	return rateval;
 }
 
-int mt7603_mac_write_txwi(struct mt76_dev *mdev, void *txwi_ptr,
-			  struct sk_buff *skb, struct mt76_wcid *wcid,
-			  struct ieee80211_sta *sta)
+void mt7603_wtbl_set_rates(struct mt7603_dev *dev, struct mt7603_sta *sta)
 {
-	struct mt7603_dev *dev = container_of(mdev, struct mt7603_dev, mt76);
+	struct ieee80211_tx_rate *rates = sta->rates;
+	int wcid = sta->wcid.idx;
+	u32 addr = mt7603_wtbl2_addr(wcid);
+	bool stbc = false;
+	int n_rates = sta->n_rates;
+	u8 bw, bw_prev, bw_idx = 0;
+	u16 val;
+	int i;
+
+	for (i = n_rates; i < 4; i++)
+		rates[i] = rates[n_rates - 1];
+
+	val = mt7603_mac_tx_rate_val(dev, &rates[0], stbc, &bw);
+	mt76_rmw_field(dev, addr + 9 * 4, MT_WTBL2_W9_BW_CAP, bw);
+	mt76_rmw_field(dev, addr + 10 * 4, MT_WTBL2_W10_RATE1, val);
+
+	bw_prev = bw;
+	val = mt7603_mac_tx_rate_val(dev, &rates[1], stbc, &bw);
+	mt76_rmw_field(dev, addr + 10 * 4, MT_WTBL2_W10_RATE2, val);
+	if (bw_prev < bw && !bw_idx)
+		bw_idx = 1;
+
+	bw_prev = bw;
+	val = mt7603_mac_tx_rate_val(dev, &rates[2], stbc, &bw);
+	mt76_rmw_field(dev, addr + 10 * 4, MT_WTBL2_W10_RATE3_LO, val);
+	mt76_rmw_field(dev, addr + 11 * 4, MT_WTBL2_W11_RATE3_HI, val >> 4);
+	if (bw_prev < bw && !bw_idx)
+		bw_idx = 2;
+
+	bw_prev = bw;
+	val = mt7603_mac_tx_rate_val(dev, &rates[3], stbc, &bw);
+	mt76_rmw_field(dev, addr + 11 * 4, MT_WTBL2_W11_RATE4, val);
+	if (bw_prev < bw && !bw_idx)
+		bw_idx = 3;
+
+	mt76_rmw_field(dev, addr + 9 * 4, MT_WTBL2_W9_CHANGE_BW_RATE,
+		       bw_idx ? bw_idx - 1 : 7);
+}
+
+static int
+mt7603_mac_write_txwi(struct mt7603_dev *dev, __le32 *txwi,
+		      struct sk_buff *skb, struct mt76_wcid *wcid,
+		      struct ieee80211_sta *sta, int pid)
+{
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
 	struct ieee80211_tx_rate *rate = &info->control.rates[0];
 	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *) skb->data;
-	__le32 *txwi = txwi_ptr;
 	int wlan_idx;
 	int hdr_len = ieee80211_get_hdrlen_from_skb(skb);
+	int tx_count = 8;
 	u8 frame_type, frame_subtype;
-	u8 nss, bw;
+	u8 bw;
+
+	if (sta) {
+		struct mt7603_sta *msta = (struct mt7603_sta *) sta->drv_priv;
+		tx_count = msta->n_rates * MT7603_RATE_RETRY;
+	}
 
 	if (wcid)
 		wlan_idx = wcid->idx;
@@ -307,8 +410,10 @@ int mt7603_mac_write_txwi(struct mt76_dev *mdev, void *txwi_ptr,
 		MT76_SET(MT_TXD1_WLAN_IDX, wlan_idx)
 	);
 
-	if (info->flags & IEEE80211_TX_CTL_NO_ACK)
+	if (info->flags & IEEE80211_TX_CTL_NO_ACK) {
 		txwi[1] |= cpu_to_le32(MT_TXD1_NO_ACK);
+		pid |= MT_PID_NOACK;
+	}
 
 	txwi[2] = cpu_to_le32(
 		MT76_SET(MT_TXD2_FRAME_TYPE, frame_type) |
@@ -318,17 +423,17 @@ int mt7603_mac_write_txwi(struct mt76_dev *mdev, void *txwi_ptr,
 	if (info->flags & IEEE80211_TX_CTL_RATE_CTRL_PROBE)
 		txwi[2] |= cpu_to_le32(MT_TXD2_BA_DISABLE);
 
-	txwi[3] = cpu_to_le32(MT76_SET(MT_TXD3_REM_TX_COUNT, 0xf));
 	txwi[4] = 0;
-	txwi[5] = cpu_to_le32(MT_TXD5_TX_STATUS_HOST | MT_TXD5_SW_POWER_MGMT);
+	txwi[5] = cpu_to_le32(
+		MT_TXD5_TX_STATUS_HOST | MT_TXD5_SW_POWER_MGMT |
+		MT76_SET(MT_TXD5_PID, pid)
+	);
 	txwi[6] = 0;
 
 	spin_lock_bh(&dev->mt76.lock);
-	if (rate->idx >= 0 && !rate->count) {
-		u16 rateval = mt7603_mac_tx_rate_val(dev, rate, &nss, &bw);
-
-		if ((info->flags & IEEE80211_TX_CTL_STBC) && nss == 1)
-			rateval |= MT_TX_RATE_STBC;
+	if (rate->idx >= 0 && rate->count) {
+		bool stbc = info->flags & IEEE80211_TX_CTL_STBC;
+		u16 rateval = mt7603_mac_tx_rate_val(dev, rate, stbc, &bw);
 
 		txwi[6] |= cpu_to_le32(
 			MT_TXD6_FIXED_RATE |
@@ -339,8 +444,12 @@ int mt7603_mac_write_txwi(struct mt76_dev *mdev, void *txwi_ptr,
 
 		if (rate->flags & IEEE80211_TX_RC_SHORT_GI)
 			txwi[6] |= cpu_to_le32(MT_TXD6_SGI);
+
+		tx_count = rate->count;
 	}
 	spin_unlock_bh(&dev->mt76.lock);
+
+	txwi[3] = cpu_to_le32(MT76_SET(MT_TXD3_REM_TX_COUNT, tx_count));
 
 	if (info->flags & IEEE80211_TX_CTL_LDPC)
 		txwi[6] |= cpu_to_le32(MT_TXD6_LDPC);
@@ -348,6 +457,223 @@ int mt7603_mac_write_txwi(struct mt76_dev *mdev, void *txwi_ptr,
 	txwi[7] = 0;
 
 	return 0;
+}
+
+int mt7603_tx_prepare_skb(struct mt76_dev *mdev, void *txwi_ptr,
+			  struct sk_buff *skb, struct mt76_wcid *wcid,
+			  struct ieee80211_sta *sta, u32 *tx_info)
+{
+	struct mt7603_dev *dev = container_of(mdev, struct mt7603_dev, mt76);
+	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
+	struct mt7603_sta *msta = container_of(wcid, struct mt7603_sta, wcid);
+	struct mt7603_cb *cb = mt7603_skb_cb(skb);
+	int pid = 0;
+
+	if (!wcid)
+		wcid = &dev->global_sta.wcid;
+
+	if (info->flags & IEEE80211_TX_CTL_REQ_TX_STATUS) {
+		spin_lock_bh(&dev->status_lock);
+
+		msta->pid = (msta->pid + 1) & MT_PID_INDEX;
+		if (!msta->pid)
+		    msta->pid++;
+
+		pid = msta->pid;
+		cb->wcid = wcid->idx;
+		cb->pktid = pid;
+		list_add(&cb->list, &dev->status_list);
+
+		spin_unlock_bh(&dev->status_lock);
+	} else {
+		INIT_LIST_HEAD(&cb->list);
+	}
+
+	mt7603_mac_write_txwi(dev, txwi_ptr, skb, wcid, sta, pid);
+
+	return 0;
+}
+
+static void
+mt7603_fill_txs(struct mt7603_dev *dev, struct mt7603_sta *sta,
+		struct ieee80211_tx_info *info, __le32 *txs_data)
+{
+	bool final_mpdu;
+	bool ampdu;
+	int count;
+	u32 txs;
+	u8 pid;
+	int i;
+
+	txs = le32_to_cpu(txs_data[4]);
+	final_mpdu = txs & MT_TXS4_ACKED_MPDU;
+	ampdu = txs & MT_TXS4_AMPDU;
+	pid = MT76_GET(MT_TXS4_PID, txs);
+	count = MT76_GET(MT_TXS4_TX_COUNT, txs);
+
+	txs = le32_to_cpu(txs_data[0]);
+	if (!(txs & MT_TXS0_ACK_ERROR_MASK)) {
+		if (ampdu)
+			sta->ampdu_acked++;
+		info->flags |= IEEE80211_TX_STAT_ACK;
+	}
+
+	if (info->status.rates[0].count) {
+		info->status.rates[0].count = count;
+		info->status.rates[1].count = 0;
+	} else {
+		for (i = 0; i < 4 && count > 0; i++, count -= MT7603_RATE_RETRY) {
+			info->status.rates[i] = sta->rates[i];
+			info->status.rates[i].count = min_t(int, count, 2);
+		}
+	}
+
+	if (ampdu) {
+		sta->ampdu_count++;
+		if (!final_mpdu)
+			return;
+
+		info->flags |= IEEE80211_TX_CTL_AMPDU | IEEE80211_TX_STAT_AMPDU;
+		info->status.ampdu_len = sta->ampdu_count;
+		info->status.ampdu_ack_len = sta->ampdu_acked;
+	}
+
+	sta->ampdu_count = 0;
+	sta->ampdu_acked = 0;
+}
+
+struct sk_buff *
+mt7603_mac_status_skb(struct mt7603_dev *dev, struct mt7603_sta *sta, int pktid)
+{
+	struct mt7603_cb *cb, *tmp;
+	struct sk_buff *skb;
+
+	list_for_each_entry_safe(cb, tmp, &dev->status_list, list) {
+		if (sta && cb->wcid != sta->wcid.idx)
+			continue;
+
+		list_del_init(&cb->list);
+		skb = mt7603_cb_skb(cb);
+
+		if (cb->pktid == pktid)
+			break;
+
+		ieee80211_free_txskb(mt76_hw(dev), skb);
+		skb = NULL;
+	}
+
+	return skb;
+}
+
+static void
+mt7603_skb_done(struct mt7603_dev *dev, struct sk_buff *skb, u8 flags)
+{
+	struct mt7603_cb *cb = mt7603_skb_cb(skb);
+
+	flags |= cb->flags;
+	cb->flags = flags;
+
+	if (flags != (MT7603_CB_DMA_DONE | MT7603_CB_TXS_DONE))
+		return;
+
+	ieee80211_tx_status(mt76_hw(dev), skb);
+}
+
+static bool
+mt7603_mac_add_txs_skb(struct mt7603_dev *dev, struct mt7603_sta *sta, int pid,
+		       __le32 *txs_data)
+{
+	struct sk_buff *skb;
+
+	if (!pid)
+		return false;
+
+	spin_lock_bh(&dev->status_lock);
+	skb = mt7603_mac_status_skb(dev, sta, pid);
+	if (skb) {
+		struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
+		mt7603_fill_txs(dev, sta, info, txs_data);
+		mt7603_skb_done(dev, skb, MT7603_CB_TXS_DONE);
+	}
+	spin_unlock_bh(&dev->status_lock);
+
+	return !!skb;
+}
+
+void mt7603_mac_add_txs(struct mt7603_dev *dev, void *data)
+{
+	struct ieee80211_tx_info info = {};
+	struct ieee80211_sta *sta = NULL;
+	struct mt7603_sta *msta = NULL;
+	struct mt76_wcid *wcid;
+	__le32 *txs_data = data;
+	void *priv;
+	u32 txs;
+	u8 wcidx;
+	u8 pid;
+
+	txs = le32_to_cpu(txs_data[4]);
+	pid = MT76_GET(MT_TXS4_PID, txs);
+	txs = le32_to_cpu(txs_data[3]);
+	wcidx = MT76_GET(MT_TXS3_WCID, txs);
+
+	if (pid & BIT(7)) /* No-ACK */
+		return;
+
+	if (wcidx >= ARRAY_SIZE(dev->wcid))
+		return;
+
+	rcu_read_lock();
+
+	wcid = rcu_dereference(dev->wcid[wcidx]);
+	if (!wcid)
+		goto out;
+
+	priv = msta = container_of(wcid, struct mt7603_sta, wcid);
+	sta = container_of(priv, struct ieee80211_sta, drv_priv);
+
+	pid &= MT_PID_INDEX;
+	if (mt7603_mac_add_txs_skb(dev, msta, pid, txs_data))
+		goto out;
+
+	if (wcidx >= MT7603_WTBL_STA)
+		goto out;
+
+	mt7603_fill_txs(dev, msta, &info, txs_data);
+	ieee80211_tx_status_noskb(mt76_hw(dev), sta, &info);
+
+out:
+	rcu_read_unlock();
+}
+
+void mt7603_tx_complete_skb(struct mt76_dev *mdev, struct mt76_queue *q,
+			    struct mt76_queue_entry *e, bool flush)
+{
+	struct mt7603_dev *dev = container_of(mdev, struct mt7603_dev, mt76);
+	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(e->skb);
+	struct mt7603_cb *cb = mt7603_skb_cb(e->skb);
+	bool free = true;
+
+	if (!e->txwi) {
+		dev_kfree_skb_any(e->skb);
+		return;
+	}
+
+	/* will be freed by tx status handling codepath */
+	if (info->flags & (IEEE80211_TX_CTL_REQ_TX_STATUS |
+			   IEEE80211_TX_CTL_RATE_CTRL_PROBE)) {
+		spin_lock_bh(&dev->status_lock);
+		if (!flush) {
+			mt7603_skb_done(dev, e->skb, MT7603_CB_DMA_DONE);
+			free = false;
+		} else {
+			list_del_init(&cb->list);
+		}
+		spin_unlock_bh(&dev->status_lock);
+	}
+
+	if (free)
+		ieee80211_free_txskb(mdev->hw, e->skb);
 }
 
 void mt7603_mac_start(struct mt7603_dev *dev)

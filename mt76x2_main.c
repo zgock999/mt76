@@ -31,7 +31,6 @@ mt76x2_start(struct ieee80211_hw *hw)
 
 	ieee80211_queue_delayed_work(mt76_hw(dev), &dev->mac_work,
 				     MT_CALIBRATE_INTERVAL);
-	napi_enable(&dev->napi);
 
 	set_bit(MT76_STATE_RUNNING, &dev->mt76.state);
 
@@ -46,10 +45,29 @@ mt76x2_stop(struct ieee80211_hw *hw)
 	struct mt76x2_dev *dev = hw->priv;
 
 	mutex_lock(&dev->mutex);
-	napi_disable(&dev->napi);
 	clear_bit(MT76_STATE_RUNNING, &dev->mt76.state);
 	mt76x2_stop_hardware(dev);
 	mutex_unlock(&dev->mutex);
+}
+
+static void
+mt76x2_txq_init(struct mt76x2_dev *dev, struct ieee80211_txq *txq)
+{
+	struct mt76_txq *mtxq;
+
+	if (!txq)
+		return;
+
+	mtxq = (struct mt76_txq *) txq->drv_priv;
+	if (txq->sta) {
+		struct mt76x2_sta *sta = (struct mt76x2_sta *) txq->sta->drv_priv;
+		mtxq->wcid = &sta->wcid;
+	} else {
+		struct mt76x2_vif *mvif = (struct mt76x2_vif *) txq->vif->drv_priv;
+		mtxq->wcid = &mvif->group_wcid;
+	}
+
+	mt76_txq_init(&dev->mt76, txq);
 }
 
 static int
@@ -93,6 +111,22 @@ mt76x2_remove_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 	struct mt76x2_dev *dev = hw->priv;
 
 	mt76_txq_remove(&dev->mt76, vif->txq);
+}
+
+static int
+mt76x2_set_channel(struct mt76x2_dev *dev, struct cfg80211_chan_def *chandef)
+{
+	int ret;
+
+	tasklet_disable(&dev->pre_tbtt_tasklet);
+	cancel_delayed_work_sync(&dev->cal_work);
+
+	mt76x2_mac_stop(dev, true);
+	ret = mt76x2_phy_set_channel(dev, chandef);
+	mt76x2_mac_resume(dev);
+	tasklet_enable(&dev->pre_tbtt_tasklet);
+
+	return ret;
 }
 
 static int
@@ -355,6 +389,7 @@ mt76x2_sw_scan_complete(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 
 	clear_bit(MT76_SCANNING, &dev->mt76.state);
 	tasklet_enable(&dev->pre_tbtt_tasklet);
+	mt76_txq_schedule_all(&dev->mt76);
 }
 
 static void
@@ -469,14 +504,4 @@ const struct ieee80211_ops mt76x2_ops = {
 	.release_buffered_frames = mt76_release_buffered_frames,
 	.set_coverage_class = mt76x2_set_coverage_class,
 };
-
-void mt76x2_rx(struct mt76x2_dev *dev, struct sk_buff *skb)
-{
-	if (!test_bit(MT76_STATE_RUNNING, &dev->mt76.state)) {
-		dev_kfree_skb(skb);
-		return;
-	}
-
-	ieee80211_rx(mt76_hw(dev), skb);
-}
 

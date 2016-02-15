@@ -19,8 +19,11 @@
 struct mt7603_dev *mt7603_alloc_device(struct device *pdev)
 {
 	static const struct mt76_driver_ops drv_ops = {
-		.fill_txwi = mt7603_mac_write_txwi,
-		.tx_queue_skb = mt7603_tx_queue_skb,
+		.txwi_size = MT_TXD_SIZE,
+		.tx_prepare_skb = mt7603_tx_prepare_skb,
+		.tx_complete_skb = mt7603_tx_complete_skb,
+		.rx_skb = mt7603_queue_rx_skb,
+		.rx_poll_complete = mt7603_rx_poll_complete,
 	};
 	struct ieee80211_hw *hw;
 	struct mt7603_dev *dev;
@@ -172,7 +175,6 @@ mt7603_phy_init(struct mt7603_dev *dev)
 static void
 mt7603_mac_init(struct mt7603_dev *dev)
 {
-	void *dev_addr = dev->mt76.hw->wiphy->perm_addr;
 	u8 bc_addr[ETH_ALEN];
 	u32 addr;
 	int i;
@@ -208,13 +210,26 @@ mt7603_mac_init(struct mt7603_dev *dev)
 
 	eth_broadcast_addr(bc_addr);
 	mt7603_wtbl_init(dev, MT7603_WTBL_RESERVED, bc_addr);
+	dev->global_sta.wcid.idx = MT7603_WTBL_RESERVED;
+	rcu_assign_pointer(dev->wcid[MT7603_WTBL_RESERVED],
+			   &dev->global_sta.wcid);
 
 	mt76_rmw_field(dev, MT_LPON_BTEIR, MT_LPON_BTEIR_MBSS_MODE, 2);
 	mt76_rmw_field(dev, MT_WF_RMACDR, MT_WF_RMACDR_MBSSID_MASK, 2);
 
-	mt76_wr(dev, MT_MAC_ADDR0(0), get_unaligned_le32(dev_addr));
-	mt76_wr(dev, MT_MAC_ADDR1(0),
-		get_unaligned_le16(dev_addr + 4) | MT_MAC_ADDR1_VALID);
+	mt76_wr(dev, MT_AGG_ARUCR, 0);
+	mt76_wr(dev, MT_AGG_ARDCR,
+		MT76_SET(MT_AGG_ARxCR_LIMIT(0), MT7603_RATE_RETRY - 1) |
+		MT76_SET(MT_AGG_ARxCR_LIMIT(1), MT7603_RATE_RETRY - 1) |
+		MT76_SET(MT_AGG_ARxCR_LIMIT(2), MT7603_RATE_RETRY - 1) |
+		MT76_SET(MT_AGG_ARxCR_LIMIT(3), MT7603_RATE_RETRY - 1) |
+		MT76_SET(MT_AGG_ARxCR_LIMIT(4), MT7603_RATE_RETRY - 1) |
+		MT76_SET(MT_AGG_ARxCR_LIMIT(5), MT7603_RATE_RETRY - 1) |
+		MT76_SET(MT_AGG_ARxCR_LIMIT(6), MT7603_RATE_RETRY - 1) |
+		MT76_SET(MT_AGG_ARxCR_LIMIT(7), MT7603_RATE_RETRY - 1));
+
+	mt76_wr(dev, MT_AGG_ARCR, (MT_AGG_ARCR_INIT_RATE1 |
+				   MT76_SET(MT_AGG_ARCR_RTS_RATE_THR, 2)));
 }
 
 static int
@@ -316,9 +331,12 @@ int mt7603_register_device(struct mt7603_dev *dev)
 	int ret;
 
 	mutex_init(&dev->mutex);
+	spin_lock_init(&dev->status_lock);
+	INIT_LIST_HEAD(&dev->status_list);
 
 	dev->rx_chains = 2;
 	dev->tx_chains = 2;
+	dev->slottime = 9;
 
 	ret = mt7603_init_hardware(dev);
 	if (ret)
@@ -336,6 +354,8 @@ int mt7603_register_device(struct mt7603_dev *dev)
 	wiphy->iface_combinations = if_comb;
 	wiphy->n_iface_combinations = ARRAY_SIZE(if_comb);
 
+	ieee80211_hw_set(hw, REPORTS_TX_ACK_STATUS);
+
 	ret = mt76_register_device(&dev->mt76, true, mt7603_rates,
 				   ARRAY_SIZE(mt7603_rates));
 	if (ret)
@@ -347,4 +367,13 @@ int mt7603_register_device(struct mt7603_dev *dev)
 	mt76_register_debugfs(&dev->mt76);
 
 	return 0;
+}
+
+void mt7603_unregister_device(struct mt7603_dev *dev)
+{
+	mt7603_mac_status_skb(dev, NULL, -1);
+	mt76_unregister_device(&dev->mt76);
+	mt7603_mcu_exit(dev);
+	mt7603_dma_cleanup(dev);
+	ieee80211_free_hw(mt76_hw(dev));
 }

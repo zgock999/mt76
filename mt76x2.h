@@ -45,7 +45,6 @@ struct mt76x2_mcu {
 	wait_queue_head_t wait;
 	struct sk_buff_head res_q;
 
-	struct mt76_queue q_rx;
 	u32 msg_seq;
 };
 
@@ -104,13 +103,9 @@ struct mt76x2_dev {
 	DECLARE_KFIFO_PTR(txstatus_fifo, struct mt76x2_tx_status);
 
 	struct mt76x2_mcu mcu;
-	struct mt76_queue q_rx;
-
-	struct net_device napi_dev;
-	struct napi_struct napi;
+	struct sk_buff *rx_head;
 
 	struct tasklet_struct tx_tasklet;
-	struct tasklet_struct rx_tasklet;
 	struct tasklet_struct pre_tbtt_tasklet;
 	struct delayed_work cal_work;
 	struct delayed_work mac_work;
@@ -155,14 +150,6 @@ struct mt76x2_sta {
 	int n_frames;
 };
 
-struct mt76x2_reg_pair {
-	u32 reg;
-	u32 value;
-};
-
-void mt76_write_reg_pairs(struct mt76x2_dev *dev,
-			  const struct mt76x2_reg_pair *data, int len);
-
 static inline bool is_mt7612(struct mt76x2_dev *dev)
 {
 	return (dev->rev >> 16) == 0x7612;
@@ -195,7 +182,6 @@ int mt76x2_apply_calibration_data(struct mt76x2_dev *dev, int channel);
 void mt76x2_set_tx_ackto(struct mt76x2_dev *dev);
 
 int mt76x2_phy_start(struct mt76x2_dev *dev);
-int mt76x2_set_channel(struct mt76x2_dev *dev, struct cfg80211_chan_def *chandef);
 int mt76x2_phy_set_channel(struct mt76x2_dev *dev,
 			 struct cfg80211_chan_def *chandef);
 int mt76x2_phy_get_rssi(struct mt76x2_dev *dev, s8 rssi, int chain);
@@ -213,19 +199,22 @@ int mt76x2_dma_init(struct mt76x2_dev *dev);
 void mt76x2_dma_cleanup(struct mt76x2_dev *dev);
 
 void mt76x2_cleanup(struct mt76x2_dev *dev);
-void mt76x2_rx(struct mt76x2_dev *dev, struct sk_buff *skb);
 
-int mt76x2_tx_queue_skb(struct mt76_dev *cdev, struct mt76_queue *q,
-			struct sk_buff *skb, struct mt76_txwi_cache *t,
-			struct mt76_wcid *wcid, struct ieee80211_sta *sta);
 int mt76x2_tx_queue_mcu(struct mt76x2_dev *dev, enum mt76_txq_id qid,
 			struct sk_buff *skb, int cmd, int seq);
 void mt76x2_tx(struct ieee80211_hw *hw, struct ieee80211_tx_control *control,
 	     struct sk_buff *skb);
 void mt76x2_tx_complete(struct mt76x2_dev *dev, struct sk_buff *skb);
+int mt76x2_tx_prepare_skb(struct mt76_dev *dev, void *txwi_ptr,
+			  struct sk_buff *skb, struct mt76_wcid *wcid,
+			  struct ieee80211_sta *sta, u32 *tx_info);
+void mt76x2_tx_complete_skb(struct mt76_dev *mdev, struct mt76_queue *q,
+			    struct mt76_queue_entry *e, bool flush);
 
 void mt76x2_pre_tbtt_tasklet(unsigned long data);
 
-void mt76x2_txq_init(struct mt76x2_dev *dev, struct ieee80211_txq *txq);
+void mt76x2_rx_poll_complete(struct mt76_dev *dev, enum mt76_rxq_id q);
+void mt76x2_queue_rx_skb(struct mt76_dev *mdev, enum mt76_rxq_id q,
+			 struct sk_buff *skb);
 
 #endif

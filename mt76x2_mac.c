@@ -151,14 +151,12 @@ void mt76x2_mac_wcid_set_rate(struct mt76x2_dev *dev, struct mt76_wcid *wcid,
 	spin_unlock_bh(&dev->mt76.lock);
 }
 
-int mt76x2_mac_write_txwi(struct mt76_dev *mdev, void *txwi_ptr,
-			  struct sk_buff *skb, struct mt76_wcid *wcid,
-			  struct ieee80211_sta *sta)
+void mt76x2_mac_write_txwi(struct mt76x2_dev *dev, struct mt76x2_txwi *txwi,
+			   struct sk_buff *skb, struct mt76_wcid *wcid,
+			   struct ieee80211_sta *sta)
 {
-	struct mt76x2_dev *dev = container_of(mdev, struct mt76x2_dev, mt76);
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
 	struct ieee80211_tx_rate *rate = &info->control.rates[0];
-	struct mt76x2_txwi *txwi = txwi_ptr;
 	u16 rate_ht_mask = MT76_SET(MT_RXWI_RATE_PHY, BIT(1) | BIT(2));
 	u16 txwi_flags = 0;
 	u8 nss;
@@ -212,8 +210,6 @@ int mt76x2_mac_write_txwi(struct mt76_dev *mdev, void *txwi_ptr,
 
 	txwi->flags |= cpu_to_le16(txwi_flags);
 	txwi->len_ctl = cpu_to_le16(skb->len);
-
-	return 0;
 }
 
 int mt76x2_mac_process_rx(struct mt76x2_dev *dev, struct sk_buff *skb, void *rxi)
@@ -233,8 +229,10 @@ int mt76x2_mac_process_rx(struct mt76x2_dev *dev, struct sk_buff *skb, void *rxi
 	}
 
 	len = MT76_GET(MT_RXWI_CTL_MPDU_LEN, ctl);
-	skb_trim(skb, len);
+	if (WARN_ON_ONCE(len > skb->len))
+		return -EINVAL;
 
+	pskb_trim(skb, len);
 	status->chains = BIT(0) | BIT(1);
 	status->chain_signal[0] = mt76x2_phy_get_rssi(dev, rxwi->rssi[0], 0);
 	status->chain_signal[1] = mt76x2_phy_get_rssi(dev, rxwi->rssi[1], 1);
@@ -413,13 +411,13 @@ void mt76x2_mac_poll_tx_status(struct mt76x2_dev *dev, bool irq)
 		u32 stat1, stat2;
 
 		spin_lock_irqsave(&dev->irq_lock, flags);
+		stat2 = mt76_rr(dev, MT_TX_STAT_FIFO_EXT);
 		stat1 = mt76_rr(dev, MT_TX_STAT_FIFO);
 		if (!(stat1 & MT_TX_STAT_FIFO_VALID)) {
 			spin_unlock_irqrestore(&dev->irq_lock, flags);
 			break;
 		}
 
-		stat2 = mt76_rr(dev, MT_TX_STAT_FIFO_EXT);
 		spin_unlock_irqrestore(&dev->irq_lock, flags);
 
 		stat.valid = 1;
@@ -441,8 +439,9 @@ void mt76x2_mac_poll_tx_status(struct mt76x2_dev *dev, bool irq)
 	}
 }
 
-void mt76x2_mac_queue_txdone(struct mt76x2_dev *dev, struct sk_buff *skb,
-			     void *txwi_ptr)
+static void
+mt76x2_mac_queue_txdone(struct mt76x2_dev *dev, struct sk_buff *skb,
+			void *txwi_ptr)
 {
 	struct mt76x2_tx_info *txi = mt76x2_skb_tx_info(skb);
 	struct mt76x2_txwi *txwi = txwi_ptr;
@@ -464,6 +463,18 @@ void mt76x2_mac_process_tx_status_fifo(struct mt76x2_dev *dev)
 
 	while (kfifo_get(&dev->txstatus_fifo, &stat))
 		mt76x2_send_tx_status(dev, &stat, &update);
+}
+
+void mt76x2_tx_complete_skb(struct mt76_dev *mdev, struct mt76_queue *q,
+			    struct mt76_queue_entry *e, bool flush)
+{
+	struct mt76x2_dev *dev = container_of(mdev, struct mt76x2_dev, mt76);
+
+	if (e->txwi) {
+		mt76x2_mac_queue_txdone(dev, e->skb, &e->txwi->txwi);
+	} else {
+		dev_kfree_skb_any(e->skb);
+	}
 }
 
 static enum mt76x2_cipher_type
@@ -586,7 +597,7 @@ mt76_write_beacon(struct mt76x2_dev *dev, int offset, struct sk_buff *skb)
 	if (WARN_ON_ONCE(beacon_len < skb->len + sizeof(struct mt76x2_txwi)))
 		return -ENOSPC;
 
-	mt76x2_mac_write_txwi(&dev->mt76, &txwi, skb, NULL, NULL);
+	mt76x2_mac_write_txwi(dev, &txwi, skb, NULL, NULL);
 	txwi.flags |= cpu_to_le16(MT_TXWI_FLAGS_TS);
 
 	mt76_wr_copy(dev, offset, &txwi, sizeof(txwi));

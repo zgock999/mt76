@@ -12,6 +12,7 @@
  */
 
 #include "mt76x2.h"
+#include "mt76x2_dma.h"
 
 struct beacon_bc_data {
 	struct mt76x2_dev *dev;
@@ -55,6 +56,33 @@ void mt76x2_tx_complete(struct mt76x2_dev *dev, struct sk_buff *skb)
 	q = &dev->mt76.q_tx[qid];
 	if (q->queued < q->ndesc - 8)
 		ieee80211_wake_queue(mt76_hw(dev), qid);
+}
+
+int mt76x2_tx_prepare_skb(struct mt76_dev *mdev, void *txwi,
+			  struct sk_buff *skb, struct mt76_wcid *wcid,
+			  struct ieee80211_sta *sta, u32 *tx_info)
+{
+	struct mt76x2_dev *dev = container_of(mdev, struct mt76x2_dev, mt76);
+	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
+	int qsel = MT_QSEL_EDCA;
+	int ret;
+
+	mt76x2_mac_write_txwi(dev, txwi, skb, wcid, sta);
+
+	ret = mt76_insert_hdr_pad(skb);
+	if (ret < 0)
+		return ret;
+
+	if (info->flags & IEEE80211_TX_CTL_RATE_CTRL_PROBE)
+		qsel = 0;
+
+	*tx_info = MT76_SET(MT_TXD_INFO_QSEL, qsel) |
+		   MT_TXD_INFO_80211;
+
+	if (!wcid || wcid->hw_key_idx == 0xff)
+		*tx_info |= MT_TXD_INFO_WIV;
+
+	return 0;
 }
 
 static void
@@ -144,21 +172,3 @@ void mt76x2_pre_tbtt_tasklet(unsigned long arg)
 	spin_unlock_bh(&q->lock);
 }
 
-void mt76x2_txq_init(struct mt76x2_dev *dev, struct ieee80211_txq *txq)
-{
-	struct mt76_txq *mtxq;
-
-	if (!txq)
-		return;
-
-	mtxq = (struct mt76_txq *) txq->drv_priv;
-	if (txq->sta) {
-		struct mt76x2_sta *sta = (struct mt76x2_sta *) txq->sta->drv_priv;
-		mtxq->wcid = &sta->wcid;
-	} else {
-		struct mt76x2_vif *mvif = (struct mt76x2_vif *) txq->vif->drv_priv;
-		mtxq->wcid = &mvif->group_wcid;
-	}
-
-	mt76_txq_init(&dev->mt76, txq);
-}

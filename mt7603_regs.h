@@ -124,6 +124,23 @@
 #define MT_WF_AGG_BASE			0x21200
 #define MT_WF_AGG(ofs)			(MT_WF_AGG_BASE + (ofs))
 
+#define MT_AGG_ARCR			MT_WF_AGG(0x010)
+#define MT_AGG_ARCR_INIT_RATE1		BIT(0)
+#define MT_AGG_ARCR_FB_SGI_DISABLE	BIT(1)
+#define MT_AGG_ARCR_RATE8_DOWN_WRAP	BIT(2)
+#define MT_AGG_ARCR_RTS_RATE_THR	GENMASK(12, 8)
+#define MT_AGG_ARCR_RATE_DOWN_RATIO	GENMASK(17, 16)
+#define MT_AGG_ARCR_RATE_DOWN_RATIO_EN	BIT(19)
+#define MT_AGG_ARCR_RATE_UP_EXTRA_TH	GENMASK(22, 20)
+#define MT_AGG_ARCR_SPE_DIS_TH		GENMASK(27, 24)
+
+
+#define MT_AGG_ARUCR			MT_WF_AGG(0x014)
+#define MT_AGG_ARDCR			MT_WF_AGG(0x018)
+#define MT_AGG_ARxCR_LIMIT_SHIFT(_n)	(3 * _n)
+#define MT_AGG_ARxCR_LIMIT(_n)		GENMASK(3 + MT_AGG_ARxCR_LIMIT_SHIFT(_n), \
+						MT_AGG_ARxCR_LIMIT_SHIFT(_n))
+
 #define MT_AGG_TMP			MT_WF_AGG(0x0d8)
 
 #define MT_AGG_BWCR			MT_WF_AGG(0x0ec)
@@ -141,6 +158,19 @@
 
 #define MT_WF_ARB_BASE			0x21400
 #define MT_WF_ARB(ofs)			(MT_WF_ARB_BASE + (ofs))
+
+#define MT_WMM_AIFSN			MT_WF_ARB(0x020)
+#define MT_WMM_AIFSN_MASK		GENMASK(3, 0)
+#define MT_WMM_AIFSN_SHIFT(_n)		((_n) * 4)
+
+#define MT_WMM_CWMAX_BASE		MT_WF_ARB(0x028)
+#define MT_WMM_CWMAX(_n)		(MT_WMM_CWMAX_BASE + (((_n) / 2) << 2))
+#define MT_WMM_CWMAX_SHIFT(_n)		(((_n) & 1) * 16)
+#define MT_WMM_CWMAX_MASK		GENMASK(15, 0)
+
+#define MT_WMM_CWMIN			MT_WF_ARB(0x040)
+#define MT_WMM_CWMIN_MASK		GENMASK(7, 0)
+#define MT_WMM_CWMIN_SHIFT(_n)		((_n) * 8)
 
 #define MT_WF_ARB_RQCR			MT_WF_ARB(0x070)
 #define MT_WF_ARB_RQCR_RX_START		BIT(0)
@@ -181,6 +211,22 @@
 #define MT_WF_TMAC_RDG_RESP		BIT(29)
 #define MT_WF_TMAC_RDG_GRANT_NO_PENDING	BIT(30)
 #define MT_WF_TMAC_SMOOTHING		BIT(31)
+
+#define MT_WMM_TXOP_BASE		MT_WF_TMAC(0x010)
+#define MT_WMM_TXOP(_n)			(MT_WMM_TXOP_BASE + (((_n) / 2) << 2))
+#define MT_WMM_TXOP_SHIFT(_n)		((_n & 1) * 16)
+#define MT_WMM_TXOP_MASK		GENMASK(15, 0)
+
+#define MT_TIMEOUT_CCK			MT_WF_TMAC(0x090)
+#define MT_TIMEOUT_OFDM			MT_WF_TMAC(0x094)
+#define MT_TIMEOUT_VAL_PLCP		GENMASK(15, 0)
+#define MT_TIMEOUT_VAL_CCA		GENMASK(31, 16)
+
+#define MT_IFS				MT_WF_TMAC(0x0a4)
+#define MT_IFS_EIFS			GENMASK(8, 0)
+#define MT_IFS_RIFS			GENMASK(14, 10)
+#define MT_IFS_SIFS			GENMASK(22, 16)
+#define MT_IFS_SLOT			GENMASK(30, 24)
 
 #define MT_WF_RMAC_BASE			0x21800
 #define MT_WF_RMAC(ofs)			(MT_WF_RMAC_BASE + (ofs))

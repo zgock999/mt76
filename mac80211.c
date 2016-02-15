@@ -166,6 +166,8 @@ int mt76_register_device(struct mt76_dev *dev, bool vht,
 	struct wiphy *wiphy = hw->wiphy;
 	int ret;
 
+	dev_set_drvdata(dev->dev, dev);
+
 	spin_lock_init(&dev->lock);
 	INIT_LIST_HEAD(&dev->txwi_cache);
 
@@ -183,6 +185,7 @@ int mt76_register_device(struct mt76_dev *dev, bool vht,
 	wiphy->features |= NL80211_FEATURE_ACTIVE_MONITOR;
 
 	hw->txq_data_size = sizeof(struct mt76_txq);
+	hw->max_tx_fragments = 16;
 
 	ieee80211_hw_set(hw, SIGNAL_DBM);
 	ieee80211_hw_set(hw, PS_NULLFUNC_STACK);
@@ -192,6 +195,9 @@ int mt76_register_device(struct mt76_dev *dev, bool vht,
 	ieee80211_hw_set(hw, SUPPORTS_RC_TABLE);
 	ieee80211_hw_set(hw, SUPPORT_FAST_XMIT);
 	ieee80211_hw_set(hw, SUPPORTS_CLONED_SKBS);
+	ieee80211_hw_set(hw, SUPPORTS_AMSDU_IN_AMPDU);
+	ieee80211_hw_set(hw, TX_AMSDU);
+	ieee80211_hw_set(hw, TX_FRAG_LIST);
 
 	if (dev->cap.has_2ghz) {
 		ret = mt76_init_sband_2g(dev, rates, n_rates);
@@ -217,3 +223,22 @@ void mt76_unregister_device(struct mt76_dev *dev)
 	ieee80211_unregister_hw(hw);
 }
 EXPORT_SYMBOL_GPL(mt76_unregister_device);
+
+void mt76_rx(struct mt76_dev *dev, enum mt76_rxq_id q, struct sk_buff *skb)
+{
+	if (!test_bit(MT76_STATE_RUNNING, &dev->state)) {
+		dev_kfree_skb(skb);
+		return;
+	}
+
+	__skb_queue_tail(&dev->rx_skb[q], skb);
+}
+EXPORT_SYMBOL_GPL(mt76_rx);
+
+void mt76_rx_complete(struct mt76_dev *dev, enum mt76_rxq_id q)
+{
+	struct sk_buff *skb;
+
+	while ((skb = __skb_dequeue(&dev->rx_skb[q])) != NULL)
+		ieee80211_rx_napi(dev->hw, skb, &dev->napi[q]);
+}

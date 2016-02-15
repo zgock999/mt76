@@ -20,6 +20,7 @@ mt7603_tx_queue_mcu(struct mt7603_dev *dev, enum mt76_txq_id qid,
 		    struct sk_buff *skb)
 {
 	struct mt76_queue *q = &dev->mt76.q_tx[qid];
+	struct mt76_queue_buf buf;
 	dma_addr_t addr;
 	int idx;
 
@@ -27,66 +28,14 @@ mt7603_tx_queue_mcu(struct mt7603_dev *dev, enum mt76_txq_id qid,
 	if (dma_mapping_error(dev->mt76.dev, addr))
 		return -ENOMEM;
 
+	buf.addr = addr;
+	buf.len = skb->len;
 	spin_lock_bh(&q->lock);
-	idx = mt76_queue_add_buf(dev, q, addr, skb->len, 0, 0, 0);
-	q->entry[idx].skb = skb;
+	idx = mt76_queue_add_buf(dev, q, &buf, 1, 0, skb, NULL);
 	mt76_queue_kick(dev, q);
 	spin_unlock_bh(&q->lock);
 
 	return 0;
-}
-
-int
-mt7603_tx_queue_skb(struct mt76_dev *cdev, struct mt76_queue *q,
-		    struct sk_buff *skb, struct mt76_txwi_cache *t,
-		    struct mt76_wcid *wcid, struct ieee80211_sta *sta)
-{
-	struct mt7603_dev *dev = container_of(cdev, struct mt7603_dev, mt76);
-	dma_addr_t addr;
-	int idx;
-
-	addr = dma_map_single(dev->mt76.dev, skb->data, skb->len, DMA_TO_DEVICE);
-	if (dma_mapping_error(dev->mt76.dev, addr))
-		return -ENOMEM;
-
-	idx = mt76_queue_add_buf(dev, q, t->dma_addr, MT_TXD_SIZE,
-				 addr, skb->len, 0);
-	q->entry[idx].skb = skb;
-	q->entry[idx].txwi = t;
-
-	return idx;
-}
-
-static void
-mt7603_tx_cleanup_entry(struct mt76_dev *mdev, struct mt76_queue *q,
-			struct mt76_queue_entry *e)
-{
-	struct mt7603_dev *dev = container_of(mdev, struct mt7603_dev, mt76);
-
-	(void) dev;
-	dev_kfree_skb_any(e->skb);
-}
-
-static void
-mt7603_rx_cleanup(struct mt7603_dev *dev, struct mt76_queue *q)
-{
-	void *buf;
-
-	spin_lock_bh(&q->lock);
-	do {
-		buf = mt76_queue_dequeue(dev, q, true, NULL, NULL);
-		if (!buf)
-			break;
-
-		kfree(buf);
-	} while (1);
-	spin_unlock_bh(&q->lock);
-}
-
-static void
-mt7603_tx_cleanup(struct mt7603_dev *dev, struct mt76_queue *q, bool flush)
-{
-	mt76_queue_cleanup(dev, q, flush, mt7603_tx_cleanup_entry);
 }
 
 static int
@@ -107,62 +56,34 @@ mt7603_init_tx_queue(struct mt7603_dev *dev, struct mt76_queue *q,
 	return 0;
 }
 
-static void
-mt7603_process_rx_skb(struct mt7603_dev *dev, struct mt76_queue *q,
-		    struct sk_buff *skb)
+void mt7603_queue_rx_skb(struct mt76_dev *mdev, enum mt76_rxq_id q,
+			 struct sk_buff *skb)
 {
+	struct mt7603_dev *dev = container_of(mdev, struct mt7603_dev, mt76);
 	__le32 *rxd = (__le32 *) skb->data;
 	enum rx_pkt_type type;
 
 	type = MT76_GET(MT_RXD0_PKT_TYPE, le32_to_cpu(rxd[0]));
 
 	switch(type) {
+	case PKT_TYPE_TXS:
+		mt7603_mac_add_txs(dev, &rxd[1]);
+		dev_kfree_skb(skb);
+		break;
 	case PKT_TYPE_RX_EVENT:
 		skb_queue_tail(&dev->mcu.res_q, skb);
 		wake_up(&dev->mcu.wait);
 		return;
 	case PKT_TYPE_NORMAL:
 		if (mt7603_mac_fill_rx(dev, skb) == 0) {
-			ieee80211_rx(mt76_hw(dev), skb);
+			mt76_rx(&dev->mt76, q, skb);
 			return;
 		}
 		/* fall through */
 	default:
 		dev_kfree_skb(skb);
+		break;
 	}
-}
-
-static int
-mt7603_process_rx_queue(struct mt7603_dev *dev, struct mt76_queue *q, int budget)
-{
-	struct sk_buff *skb;
-	unsigned char *data;
-	int len;
-	int done = 0;
-
-	while (done < budget) {
-		data = mt76_queue_dequeue(dev, q, false, &len, NULL);
-		if (!data)
-			break;
-
-		skb = build_skb(data, 0);
-		if (!skb) {
-			kfree(data);
-			continue;
-		}
-
-		if (skb->tail + len > skb->end) {
-			dev_kfree_skb(skb);
-			continue;
-		}
-
-		__skb_put(skb, len);
-		mt7603_process_rx_skb(dev, q, skb);
-		done++;
-	}
-
-	mt76_queue_rx_fill(dev, q);
-	return done;
 }
 
 static int
@@ -191,34 +112,9 @@ mt7603_tx_tasklet(unsigned long data)
 	int i;
 
 	for (i = ARRAY_SIZE(dev->mt76.q_tx) - 1; i >= 0; i--)
-		mt7603_tx_cleanup(dev, &dev->mt76.q_tx[i], false);
+		mt76_queue_tx_cleanup(dev, &dev->mt76.q_tx[i], false);
 
 	mt7603_irq_enable(dev, MT_INT_TX_DONE_ALL);
-}
-
-static int
-mt7603_dma_rx_poll(struct napi_struct *napi, int budget)
-{
-	struct mt7603_dev *dev = container_of(napi, struct mt7603_dev, napi);
-	int done;
-
-	done = mt7603_process_rx_queue(dev, &dev->q_rx, budget);
-
-	if (done < budget) {
-		napi_complete(napi);
-		mt7603_irq_enable(dev, MT_INT_RX_DONE(0));
-	}
-
-	return done;
-}
-
-static void
-mt7603_rx_tasklet(unsigned long data)
-{
-	struct mt7603_dev *dev = (struct mt7603_dev *) data;
-
-	mt7603_process_rx_queue(dev, &dev->mcu.q_rx, dev->mcu.q_rx.ndesc);
-	mt7603_irq_enable(dev, MT_INT_RX_DONE(1));
 }
 
 int mt7603_dma_init(struct mt7603_dev *dev)
@@ -232,17 +128,12 @@ int mt7603_dma_init(struct mt7603_dev *dev)
 	int ret;
 	int i;
 
-	mt76_dma_init(&dev->mt76);
+	mt76_dma_attach(&dev->mt76);
 
 	init_waitqueue_head(&dev->mcu.wait);
 	skb_queue_head_init(&dev->mcu.res_q);
 
-	init_dummy_netdev(&dev->napi_dev);
-	netif_napi_add(&dev->napi_dev, &dev->napi, mt7603_dma_rx_poll, 64);
-	napi_enable(&dev->napi);
-
 	tasklet_init(&dev->tx_tasklet, mt7603_tx_tasklet, (unsigned long) dev);
-	tasklet_init(&dev->rx_tasklet, mt7603_rx_tasklet, (unsigned long) dev);
 
 	mt76_clear(dev, MT_WPDMA_GLO_CFG,
 		   MT_WPDMA_GLO_CFG_TX_DMA_EN |
@@ -279,37 +170,27 @@ int mt7603_dma_init(struct mt7603_dev *dev)
 	if (ret)
 		return ret;
 
-	ret = mt7603_init_rx_queue(dev, &dev->mcu.q_rx, 1, MT_MCU_RING_SIZE,
-				   MT_RX_BUF_SIZE);
+	ret = mt7603_init_rx_queue(dev, &dev->mt76.q_rx[MT_RXQ_MCU], 1,
+				   MT_MCU_RING_SIZE, MT_RX_BUF_SIZE);
 	if (ret)
 		return ret;
 
-	ret = mt7603_init_rx_queue(dev, &dev->q_rx, 0,
+	ret = mt7603_init_rx_queue(dev, &dev->mt76.q_rx[MT_RXQ_MAIN], 0,
 				   MT_RX_RING_SIZE, MT_RX_BUF_SIZE);
 	if (ret)
 		return ret;
 
-	mt76_queue_rx_fill(dev, &dev->q_rx);
-	mt76_queue_rx_fill(dev, &dev->mcu.q_rx);
-
 	mt76_wr(dev, MT_DELAY_INT_CFG, 0);
-
-	return 0;
+	return mt76_init_queues(dev);
 }
 
 void mt7603_dma_cleanup(struct mt7603_dev *dev)
 {
-	int i;
-
 	mt76_clear(dev, MT_WPDMA_GLO_CFG,
 		   MT_WPDMA_GLO_CFG_TX_DMA_EN |
 		   MT_WPDMA_GLO_CFG_RX_DMA_EN |
 		   MT_WPDMA_GLO_CFG_TX_WRITEBACK_DONE);
 
 	tasklet_kill(&dev->tx_tasklet);
-	tasklet_kill(&dev->rx_tasklet);
-	for (i = 0; i < ARRAY_SIZE(dev->mt76.q_tx); i++)
-		mt7603_tx_cleanup(dev, &dev->mt76.q_tx[i], true);
-	mt7603_rx_cleanup(dev, &dev->q_rx);
-	mt7603_rx_cleanup(dev, &dev->mcu.q_rx);
+	mt76_dma_cleanup(&dev->mt76);
 }

@@ -15,16 +15,6 @@
 #include "mt76x2.h"
 #include "mt76x2_trace.h"
 
-void mt76_write_reg_pairs(struct mt76x2_dev *dev,
-			  const struct mt76x2_reg_pair *data, int len)
-{
-	while (len > 0) {
-		mt76_wr(dev, data->reg, data->value);
-		len--;
-		data++;
-	}
-}
-
 void mt76x2_set_irq_mask(struct mt76x2_dev *dev, u32 clear, u32 set)
 {
 	unsigned long flags;
@@ -34,6 +24,12 @@ void mt76x2_set_irq_mask(struct mt76x2_dev *dev, u32 clear, u32 set)
 	dev->irqmask |= set;
 	mt76_wr(dev, MT_INT_MASK_CSR, dev->irqmask);
 	spin_unlock_irqrestore(&dev->irq_lock, flags);
+}
+
+void mt76x2_rx_poll_complete(struct mt76_dev *mdev, enum mt76_rxq_id q)
+{
+	struct mt76x2_dev *dev = container_of(mdev, struct mt76x2_dev, mt76);
+	mt76x2_irq_enable(dev, MT_INT_RX_DONE(q));
 }
 
 irqreturn_t mt76x2_irq_handler(int irq, void *dev_instance)
@@ -58,12 +54,12 @@ irqreturn_t mt76x2_irq_handler(int irq, void *dev_instance)
 
 	if (intr & MT_INT_RX_DONE(0)) {
 		mt76x2_irq_disable(dev, MT_INT_RX_DONE(0));
-		napi_schedule(&dev->napi);
+		napi_schedule(&dev->mt76.napi[0]);
 	}
 
 	if (intr & MT_INT_RX_DONE(1)) {
 		mt76x2_irq_disable(dev, MT_INT_RX_DONE(1));
-		tasklet_schedule(&dev->rx_tasklet);
+		napi_schedule(&dev->mt76.napi[1]);
 	}
 
 	if (intr & MT_INT_PRE_TBTT)
@@ -79,20 +75,5 @@ irqreturn_t mt76x2_irq_handler(int irq, void *dev_instance)
 	}
 
 	return IRQ_HANDLED;
-}
-
-int mt76x2_set_channel(struct mt76x2_dev *dev, struct cfg80211_chan_def *chandef)
-{
-	int ret;
-
-	tasklet_disable(&dev->pre_tbtt_tasklet);
-	cancel_delayed_work_sync(&dev->cal_work);
-
-	mt76x2_mac_stop(dev, true);
-	ret = mt76x2_phy_set_channel(dev, chandef);
-	mt76x2_mac_resume(dev);
-	tasklet_enable(&dev->pre_tbtt_tasklet);
-
-	return ret;
 }
 

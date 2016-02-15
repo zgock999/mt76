@@ -12,7 +12,6 @@
  */
 
 #include "mt7603.h"
-#include "mt7603_eeprom.h"
 
 void mt7603_set_irq_mask(struct mt7603_dev *dev, u32 clear, u32 set)
 {
@@ -23,6 +22,12 @@ void mt7603_set_irq_mask(struct mt7603_dev *dev, u32 clear, u32 set)
 	dev->irqmask |= set;
 	mt76_wr(dev, MT_INT_MASK_CSR, dev->irqmask);
 	spin_unlock_irqrestore(&dev->irq_lock, flags);
+}
+
+void mt7603_rx_poll_complete(struct mt76_dev *mdev, enum mt76_rxq_id q)
+{
+	struct mt7603_dev *dev = container_of(mdev, struct mt7603_dev, mt76);
+	mt7603_irq_enable(dev, MT_INT_RX_DONE(q));
 }
 
 irqreturn_t mt7603_irq_handler(int irq, void *dev_instance)
@@ -45,12 +50,12 @@ irqreturn_t mt7603_irq_handler(int irq, void *dev_instance)
 
 	if (intr & MT_INT_RX_DONE(0)) {
 		mt7603_irq_disable(dev, MT_INT_RX_DONE(0));
-		napi_schedule(&dev->napi);
+		napi_schedule(&dev->mt76.napi[0]);
 	}
 
 	if (intr & MT_INT_RX_DONE(1)) {
 		mt7603_irq_disable(dev, MT_INT_RX_DONE(1));
-		tasklet_schedule(&dev->rx_tasklet);
+		napi_schedule(&dev->mt76.napi[1]);
 	}
 
 #if 0
@@ -73,36 +78,4 @@ u32 mt7603_reg_map(struct mt7603_dev *dev, u32 addr)
 	mt76_wr(dev, MT_MCU_PCIE_REMAP_2, base);
 
 	return MT_PCIE_REMAP_BASE_2 + offset;
-}
-
-int mt7603_set_channel(struct mt7603_dev *dev, struct cfg80211_chan_def *def)
-{
-	u8 *rssi_data = (u8 *) dev->mt76.eeprom.data;
-	int idx, ret;
-
-	u8 bw = MT_BW_20;
-
-	mt7603_mac_stop(dev);
-
-	dev->chandef = *def;
-	mt76_rmw_field(dev, MT_AGG_BWCR, MT_AGG_BWCR_BW, bw);
-	ret = mt7603_mcu_set_channel(dev);
-	if (ret)
-		return ret;
-
-	if (def->chan->band == IEEE80211_BAND_5GHZ) {
-		idx = 1;
-		rssi_data += MT_EE_RSSI_OFFSET_5G;
-	} else {
-		idx = 0;
-		rssi_data += MT_EE_RSSI_OFFSET_2G;
-	}
-
-	memcpy(dev->rssi_offset, rssi_data, sizeof(dev->rssi_offset));
-
-	idx |= (def->chan - mt76_hw(dev)->wiphy->bands[def->chan->band]->channels) << 1;
-	mt76_set(dev, MT_WF_RMAC_CH_FREQ, idx);
-	mt7603_mac_start(dev);
-
-	return 0;
 }
