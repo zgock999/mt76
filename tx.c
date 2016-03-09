@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2
@@ -91,6 +91,7 @@ int mt76_tx_queue_skb(struct mt76_dev *dev, struct mt76_queue *q,
 		      struct sk_buff *skb, struct mt76_wcid *wcid,
 		      struct ieee80211_sta *sta)
 {
+	struct mt76_queue_entry e;
 	struct mt76_txwi_cache *t;
 	struct mt76_queue_buf buf[32];
 	struct sk_buff *iter;
@@ -101,23 +102,24 @@ int mt76_tx_queue_skb(struct mt76_dev *dev, struct mt76_queue *q,
 
 	t = mt76_get_txwi(dev);
 	if (!t) {
-		ret = -ENOMEM;
-		goto free;
+		ieee80211_free_txskb(dev->hw, skb);
+		return -ENOMEM;
 	}
 
 	dma_sync_single_for_cpu(dev->dev, t->dma_addr, sizeof(t->txwi),
 				DMA_TO_DEVICE);
-	ret = dev->drv->tx_prepare_skb(dev, &t->txwi, skb, wcid, sta, &tx_info);
+	ret = dev->drv->tx_prepare_skb(dev, &t->txwi, skb, q, wcid, sta,
+				       &tx_info);
 	dma_sync_single_for_device(dev->dev, t->dma_addr, sizeof(t->txwi),
 				   DMA_TO_DEVICE);
 	if (ret < 0)
-		goto free_txwi;
+		goto free;
 
 	len = skb->len - skb->data_len;
 	addr = dma_map_single(dev->dev, skb->data, len, DMA_TO_DEVICE);
 	if (dma_mapping_error(dev->dev, addr)) {
 		ret = -ENOMEM;
-		goto free_txwi;
+		goto free;
 	}
 
 	n = 0;
@@ -138,7 +140,7 @@ int mt76_tx_queue_skb(struct mt76_dev *dev, struct mt76_queue *q,
 		buf[n++].len = iter->len;
 	}
 
-	if (q->queued + (n + 1) / 2 >= q->ndesc)
+	if (q->queued + (n + 1) / 2 >= q->ndesc - 1)
 		goto unmap;
 
 	return dev->queue_ops->add_buf(dev, q, buf, n, tx_info, skb, t);
@@ -148,10 +150,11 @@ unmap:
 	for (n--; n > 0; n--)
 		dma_unmap_single(dev->dev, buf[n].addr, buf[n].len, DMA_TO_DEVICE);
 
-free_txwi:
-	mt76_put_txwi(dev, t);
 free:
-	ieee80211_free_txskb(dev->hw, skb);
+	e.skb = skb;
+	e.txwi = t;
+	dev->drv->tx_complete_skb(dev, q, &e, true);
+	mt76_put_txwi(dev, t);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(mt76_tx_queue_skb);
@@ -246,6 +249,7 @@ mt76_release_buffered_frames(struct ieee80211_hw *hw, struct ieee80211_sta *sta,
 	struct mt76_queue *hwq = &dev->q_tx[MT_TXQ_PSD];
 	int i;
 
+	spin_lock_bh(&hwq->lock);
 	for (i = 0; tids && nframes; i++, tids >>= 1) {
 		struct ieee80211_txq *txq = sta->txq[i];
 		struct mt76_txq *mtxq = (struct mt76_txq *) txq->drv_priv;
@@ -263,18 +267,18 @@ mt76_release_buffered_frames(struct ieee80211_hw *hw, struct ieee80211_sta *sta,
 				mt76_check_agg_ssn(mtxq, skb);
 
 			nframes--;
-			if (last_skb) {
+			if (last_skb)
 				mt76_queue_ps_skb(dev, sta, last_skb, false);
-				last_skb = skb;
-			}
+
+			last_skb = skb;
 		} while (nframes);
 	}
 
-	if (!last_skb)
-		return;
-
-	mt76_queue_ps_skb(dev, sta, last_skb, true);
-	dev->queue_ops->kick(dev, hwq);
+	if (last_skb) {
+		mt76_queue_ps_skb(dev, sta, last_skb, true);
+		dev->queue_ops->kick(dev, hwq);
+	}
+	spin_lock_bh(&hwq->lock);
 }
 EXPORT_SYMBOL_GPL(mt76_release_buffered_frames);
 
@@ -408,7 +412,8 @@ void mt76_txq_schedule(struct mt76_dev *dev, struct mt76_queue *hwq)
 {
 	int len;
 
-	if (test_bit(MT76_SCANNING, &dev->state))
+	if (test_bit(MT76_SCANNING, &dev->state) ||
+	    test_bit(MT76_RESET, &dev->state))
 		return;
 
 	do {
@@ -424,12 +429,18 @@ void mt76_txq_schedule_all(struct mt76_dev *dev)
 {
 	int i;
 
-	for (i = 0; i <= MT_TXQ_BK; i++)
-		mt76_txq_schedule(dev, &dev->q_tx[i]);
+	for (i = 0; i <= MT_TXQ_BK; i++) {
+		struct mt76_queue *q = &dev->q_tx[i];
+
+		spin_lock_bh(&q->lock);
+		mt76_txq_schedule(dev, q);
+		spin_unlock_bh(&q->lock);
+	}
 }
 EXPORT_SYMBOL_GPL(mt76_txq_schedule_all);
 
-void mt76_stop_tx_queues(struct mt76_dev *dev, struct ieee80211_sta *sta)
+void mt76_stop_tx_queues(struct mt76_dev *dev, struct ieee80211_sta *sta,
+			 bool send_bar)
 {
 	int i;
 
@@ -438,7 +449,7 @@ void mt76_stop_tx_queues(struct mt76_dev *dev, struct ieee80211_sta *sta)
 		struct mt76_txq *mtxq = (struct mt76_txq *) txq->drv_priv;
 
 		spin_lock_bh(&mtxq->hwq->lock);
-		mtxq->send_bar = mtxq->aggr;
+		mtxq->send_bar = mtxq->aggr && send_bar;
 		if (!list_empty(&mtxq->list))
 		    list_del_init(&mtxq->list);
 		spin_unlock_bh(&mtxq->hwq->lock);

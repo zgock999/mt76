@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2
@@ -44,6 +44,7 @@ mt7603_init_tx_queue(struct mt7603_dev *dev, struct mt76_queue *q,
 {
 	int ret;
 
+	q->hw_idx = idx;
 	q->regs = dev->mt76.regs + MT_TX_RING_BASE + idx * MT_RING_SIZE;
 	q->ndesc = n_desc;
 
@@ -61,13 +62,15 @@ void mt7603_queue_rx_skb(struct mt76_dev *mdev, enum mt76_rxq_id q,
 {
 	struct mt7603_dev *dev = container_of(mdev, struct mt7603_dev, mt76);
 	__le32 *rxd = (__le32 *) skb->data;
+	__le32 *end = (__le32 *) &skb->data[skb->len];
 	enum rx_pkt_type type;
 
 	type = MT76_GET(MT_RXD0_PKT_TYPE, le32_to_cpu(rxd[0]));
 
 	switch(type) {
 	case PKT_TYPE_TXS:
-		mt7603_mac_add_txs(dev, &rxd[1]);
+		for (rxd++; rxd + 5 <= end; rxd += 5)
+			mt7603_mac_add_txs(dev, rxd);
 		dev_kfree_skb(skb);
 		break;
 	case PKT_TYPE_RX_EVENT:
@@ -111,8 +114,9 @@ mt7603_tx_tasklet(unsigned long data)
 	struct mt7603_dev *dev = (struct mt7603_dev *) data;
 	int i;
 
-	for (i = ARRAY_SIZE(dev->mt76.q_tx) - 1; i >= 0; i--)
-		mt76_queue_tx_cleanup(dev, &dev->mt76.q_tx[i], false);
+	dev->tx_dma_check = 0;
+	for (i = MT_TXQ_MCU; i >= 0; i--)
+		mt76_queue_tx_cleanup(dev, i, false);
 
 	mt7603_irq_enable(dev, MT_INT_TX_DONE_ALL);
 }

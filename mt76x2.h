@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2
@@ -127,7 +127,6 @@ struct mt76x2_dev {
 	u16 chainmask;
 
 	struct mt76x2_calibration cal;
-	struct debugfs_blob_wrapper otp;
 
 	s8 target_power;
 	s8 target_power_delta[2];
@@ -206,8 +205,9 @@ void mt76x2_tx(struct ieee80211_hw *hw, struct ieee80211_tx_control *control,
 	     struct sk_buff *skb);
 void mt76x2_tx_complete(struct mt76x2_dev *dev, struct sk_buff *skb);
 int mt76x2_tx_prepare_skb(struct mt76_dev *dev, void *txwi_ptr,
-			  struct sk_buff *skb, struct mt76_wcid *wcid,
-			  struct ieee80211_sta *sta, u32 *tx_info);
+			  struct sk_buff *skb, struct mt76_queue *q,
+			  struct mt76_wcid *wcid, struct ieee80211_sta *sta,
+			  u32 *tx_info);
 void mt76x2_tx_complete_skb(struct mt76_dev *mdev, struct mt76_queue *q,
 			    struct mt76_queue_entry *e, bool flush);
 

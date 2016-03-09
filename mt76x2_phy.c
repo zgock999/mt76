@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2
@@ -15,43 +15,6 @@
 #include "mt76x2.h"
 #include "mt76x2_mcu.h"
 #include "mt76x2_eeprom.h"
-
-static bool
-mt76x2_phy_rf_op(struct mt76x2_dev *dev, bool idx, u16 offset, bool write)
-{
-	u32 val = MT76_SET(MT_RF_CTRL_ADDR, offset);
-
-	if (idx)
-		val |= MT_RF_CTRL_IDX;
-
-	if (write)
-		val |= MT_RF_CTRL_WRITE;
-
-	mt76_wr(dev, MT_RF_CTRL, val);
-
-	return mt76_poll(dev, MT_RF_CTRL, MT_RF_CTRL_BUSY, 0, 2000);
-}
-
-static int __maybe_unused
-mt76x2_phy_rf_read(struct mt76x2_dev *dev, bool idx, u16 offset, u32 *val)
-{
-	if (!mt76x2_phy_rf_op(dev, idx, offset, false))
-		return -ETIMEDOUT;
-
-	*val = mt76_rr(dev, MT_RF_DATA_READ);
-	return 0;
-}
-
-static int __maybe_unused
-mt76x2_phy_rf_write(struct mt76x2_dev *dev, bool idx, u16 offset, u32 val)
-{
-	mt76_wr(dev, MT_RF_DATA_WRITE, val);
-
-	if (!mt76x2_phy_rf_op(dev, idx, offset, true))
-		return -ETIMEDOUT;
-
-	return 0;
-}
 
 static void
 mt76x2_adjust_lna_gain(struct mt76x2_dev *dev, int reg, s8 offset)

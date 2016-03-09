@@ -13,46 +13,42 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/pci.h>
+#include <linux/platform_device.h>
 
 #include "mt7603.h"
 
-static const struct pci_device_id mt76pci_device_table[] = {
-	{ PCI_DEVICE(0x14c3, 0x7603) },
-	{ },
-};
-
 static int
-mt76pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+mt76_wmac_probe(struct platform_device *pdev)
 {
+	struct resource *res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	struct mt7603_dev *dev;
+	void __iomem *mem_base;
+	int irq;
 	int ret;
 
-	ret = pcim_enable_device(pdev);
-	if (ret)
-		return ret;
+	irq = platform_get_irq(pdev, 0);
+	if (irq < 0) {
+		dev_err(&pdev->dev, "Failed to get device IRQ\n");
+		return irq;
+	}
 
-	ret = pcim_iomap_regions(pdev, BIT(0), pci_name(pdev));
-	if (ret)
-		return ret;
-
-	pci_set_master(pdev);
-
-	ret = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
-	if (ret)
-		return ret;
+	mem_base = devm_ioremap_resource(&pdev->dev, res);
+	if (!mem_base) {
+		dev_err(&pdev->dev, "Failed to get memory resource\n");
+		return -EINVAL;
+	}
 
 	dev = mt7603_alloc_device(&pdev->dev);
 	if (!dev)
 		return -ENOMEM;
 
-	mt76_mmio_init(&dev->mt76, pcim_iomap_table(pdev)[0]);
+	mt76_mmio_init(&dev->mt76, mem_base);
 
 	dev->mt76.rev = (mt76_rr(dev, MT_HW_CHIPID) << 16) |
 			(mt76_rr(dev, MT_HW_REV) & 0xff);
 	dev_printk(KERN_INFO, dev->mt76.dev, "ASIC revision: %04x\n", dev->mt76.rev);
 
-	ret = devm_request_irq(dev->mt76.dev, pdev->irq, mt7603_irq_handler,
+	ret = devm_request_irq(dev->mt76.dev, irq, mt7603_irq_handler,
 			       IRQF_SHARED, KBUILD_MODNAME, dev);
 	if (ret)
 		goto error;
@@ -67,22 +63,31 @@ error:
 	return ret;
 }
 
-static void
-mt76pci_remove(struct pci_dev *pdev)
+static int
+mt76_wmac_remove(struct platform_device *pdev)
 {
-	struct mt76_dev *mdev = pci_get_drvdata(pdev);
+	struct mt76_dev *mdev = platform_get_drvdata(pdev);
 	struct mt7603_dev *dev = container_of(mdev, struct mt7603_dev, mt76);
 
 	mt7603_unregister_device(dev);
+
+	return 0;
 }
 
-MODULE_DEVICE_TABLE(pci, mt76pci_device_table);
-MODULE_FIRMWARE(MT7603_FIRMWARE_E1);
-MODULE_FIRMWARE(MT7603_FIRMWARE_E2);
+static const struct of_device_id of_wmac_match[] = {
+	{ .compatible = "mediatek,mt7628-wmac" },
+	{},
+};
 
-struct pci_driver mt7603_pci_driver = {
-	.name		= KBUILD_MODNAME,
-	.id_table	= mt76pci_device_table,
-	.probe		= mt76pci_probe,
-	.remove		= mt76pci_remove,
+MODULE_DEVICE_TABLE(of, of_wmac_match);
+MODULE_FIRMWARE(MT7628_FIRMWARE_E1);
+MODULE_FIRMWARE(MT7628_FIRMWARE_E2);
+
+struct platform_driver mt76_wmac_driver = {
+	.probe		= mt76_wmac_probe,
+	.remove		= mt76_wmac_remove,
+	.driver = {
+		.name = "mt76_wmac",
+		.of_match_table = of_wmac_match,
+	},
 };

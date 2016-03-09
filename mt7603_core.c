@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2
@@ -43,6 +43,15 @@ irqreturn_t mt7603_irq_handler(int irq, void *dev_instance)
 
 	intr &= dev->irqmask;
 
+	if (intr & MT_INT_MAC_IRQ3) {
+		u32 hwintr = mt76_rr(dev, MT_HW_INT_STATUS(3));
+		mt76_wr(dev, MT_HW_INT_STATUS(3), hwintr);
+		if (hwintr & MT_HW_INT3_PRE_TBTT0)
+			tasklet_schedule(&dev->pre_tbtt_tasklet);
+		if (hwintr & MT_HW_INT3_TBTT0)
+			mt7603_tbtt(dev);
+	}
+
 	if (intr & MT_INT_TX_DONE_ALL) {
 		mt7603_irq_disable(dev, MT_INT_TX_DONE_ALL);
 		tasklet_schedule(&dev->tx_tasklet);
@@ -57,15 +66,6 @@ irqreturn_t mt7603_irq_handler(int irq, void *dev_instance)
 		mt7603_irq_disable(dev, MT_INT_RX_DONE(1));
 		napi_schedule(&dev->mt76.napi[1]);
 	}
-
-#if 0
-	if (intr & MT_INT_PRE_TBTT)
-		tasklet_schedule(&dev->pre_tbtt_tasklet);
-
-	/* send buffered multicast frames now */
-	if (intr & MT_INT_TBTT)
-		mt76_queue_kick(dev, &dev->mt76.q_tx[MT_TXQ_PSD]);
-#endif
 
 	return IRQ_HANDLED;
 }

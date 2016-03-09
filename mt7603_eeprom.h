@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2
@@ -78,6 +78,8 @@ enum mt7603_eeprom_field {
 	MT_EE_STEP_NUM_PLUS_3_4 =		0x0d2,
 	MT_EE_STEP_NUM_PLUS_5_6 =		0x0d4,
 	MT_EE_STEP_NUM_PLUS_7 =			0x0d6,
+
+	MT_EE_CP_FT_VERSION =			0x0f0,
 
 	MT_EE_XTAL_FREQ_OFFSET =		0x0f4,
 	MT_EE_XTAL_TRIM_2_COMP =		0x0f5,

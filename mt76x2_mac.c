@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2
@@ -566,26 +566,6 @@ int mt76x2_mac_shared_key_setup(struct mt76x2_dev *dev, u8 vif_idx, u8 key_idx,
 	mt76_wr_copy(dev, MT_SKEY(vif_idx, key_idx), key_data, sizeof(key_data));
 
 	return 0;
-}
-
-int mt76x2_mac_skb_tx_overhead(struct mt76x2_dev *dev, struct sk_buff *skb)
-{
-	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
-	struct ieee80211_key_conf *key = info->control.hw_key;
-	int overhead;
-
-	if (!key)
-		return 0;
-
-	overhead = key->icv_len;
-	if (!(key->flags & IEEE80211_KEY_FLAG_GENERATE_IV))
-		overhead += key->iv_len;
-
-	if (!(key->flags & IEEE80211_KEY_FLAG_GENERATE_MMIC) &&
-	    key->cipher == WLAN_CIPHER_SUITE_TKIP)
-		overhead += 8;
-
-	return overhead;
 }
 
 static int

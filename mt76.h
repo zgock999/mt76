@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2
@@ -89,7 +89,9 @@ struct mt76_queue {
 	int ndesc;
 	int queued;
 	int buf_size;
-	int buf_offset;
+
+	u8 buf_offset;
+	u8 hw_idx;
 
 	dma_addr_t desc_dma;
 	struct sk_buff *rx_head;
@@ -107,7 +109,9 @@ struct mt76_queue_ops {
 	void *(*dequeue)(struct mt76_dev *dev, struct mt76_queue *q, bool flush,
 			 int *len, u32 *info, bool *more);
 
-	void (*tx_cleanup)(struct mt76_dev *dev, struct mt76_queue *q, bool flush);
+	void (*rx_reset)(struct mt76_dev *dev, enum mt76_rxq_id qid);
+
+	void (*tx_cleanup)(struct mt76_dev *dev, enum mt76_txq_id qid, bool flush);
 
 	void (*kick)(struct mt76_dev *dev, struct mt76_queue *q);
 };
@@ -143,6 +147,7 @@ enum {
 	MT76_STATE_INITIALIZED,
 	MT76_STATE_RUNNING,
 	MT76_SCANNING,
+	MT76_RESET,
 };
 
 struct mt76_hw_cap {
@@ -154,7 +159,8 @@ struct mt76_driver_ops {
 	u16 txwi_size;
 
 	int (*tx_prepare_skb)(struct mt76_dev *dev, void *txwi_ptr,
-			      struct sk_buff *skb, struct mt76_wcid *wcid,
+			      struct sk_buff *skb, struct mt76_queue *q,
+			      struct mt76_wcid *wcid,
 			      struct ieee80211_sta *sta, u32 *tx_info);
 
 	void (*tx_complete_skb)(struct mt76_dev *dev, struct mt76_queue *q,
@@ -191,6 +197,7 @@ struct mt76_dev {
 	struct ieee80211_supported_band sband_2g;
 	struct ieee80211_supported_band sband_5g;
 	struct debugfs_blob_wrapper eeprom;
+	struct debugfs_blob_wrapper otp;
 	struct mt76_hw_cap cap;
 
 	u32 debugfs_reg;
@@ -232,16 +239,23 @@ bool __mt76_poll_msec(struct mt76_dev *dev, u32 offset, u32 mask, u32 val,
 
 void mt76_mmio_init(struct mt76_dev *dev, void __iomem *regs);
 
+static inline u16 mt76_chip(struct mt76_dev *dev)
+{
+	return dev->rev >> 16;
+}
+
 static inline u16 mt76_rev(struct mt76_dev *dev)
 {
 	return dev->rev & 0xffff;
 }
 
+#define mt76xx_chip(dev) mt76_chip(&((dev)->mt76))
 #define mt76xx_rev(dev) mt76_rev(&((dev)->mt76))
 
 #define mt76_init_queues(dev)		(dev)->mt76.queue_ops->init(&((dev)->mt76))
 #define mt76_queue_alloc(dev, ...)	(dev)->mt76.queue_ops->alloc(&((dev)->mt76), __VA_ARGS__)
 #define mt76_queue_add_buf(dev, ...)	(dev)->mt76.queue_ops->add_buf(&((dev)->mt76), __VA_ARGS__)
+#define mt76_queue_rx_reset(dev, ...)	(dev)->mt76.queue_ops->rx_reset(&((dev)->mt76), __VA_ARGS__)
 #define mt76_queue_tx_cleanup(dev, ...)	(dev)->mt76.queue_ops->tx_cleanup(&((dev)->mt76), __VA_ARGS__)
 #define mt76_queue_kick(dev, ...)	(dev)->mt76.queue_ops->kick(&((dev)->mt76), __VA_ARGS__)
 
@@ -271,7 +285,8 @@ void mt76_tx(struct mt76_dev *dev, struct ieee80211_sta *sta,
 void mt76_txq_init(struct mt76_dev *dev, struct ieee80211_txq *txq);
 void mt76_txq_remove(struct mt76_dev *dev, struct ieee80211_txq *txq);
 void mt76_wake_tx_queue(struct ieee80211_hw *hw, struct ieee80211_txq *txq);
-void mt76_stop_tx_queues(struct mt76_dev *dev, struct ieee80211_sta *sta);
+void mt76_stop_tx_queues(struct mt76_dev *dev, struct ieee80211_sta *sta,
+			 bool send_bar);
 void mt76_txq_schedule(struct mt76_dev *dev, struct mt76_queue *hwq);
 void mt76_txq_schedule_all(struct mt76_dev *dev);
 void mt76_release_buffered_frames(struct ieee80211_hw *hw,

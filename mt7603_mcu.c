@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2
@@ -112,6 +112,7 @@ mt7603_mcu_msg_send(struct mt7603_dev *dev, struct sk_buff *skb, int cmd, int qu
 		skb = mt7603_mcu_get_response(dev, expires);
 		if (!skb) {
 			printk("MCU message %d (seq %d) timed out\n", cmd, seq);
+			dev->tx_dma_check = MT7603_WATCHDOG_TIMEOUT;
 			ret = -ETIMEDOUT;
 			break;
 		}
@@ -210,10 +211,17 @@ mt7603_load_firmware(struct mt7603_dev *dev)
 	u32 addr, val;
 	int ret;
 
-	if (mt76xx_rev(dev) < MT7603_REV_E2)
-		firmware = MT7603_FIRMWARE_E1;
-	else
-		firmware = MT7603_FIRMWARE_E2;
+	if (is_mt7628(dev)) {
+		if (mt76xx_rev(dev) == MT7628_REV_E1)
+			firmware = MT7628_FIRMWARE_E1;
+		else
+			firmware = MT7628_FIRMWARE_E2;
+	} else {
+		if (mt76xx_rev(dev) < MT7603_REV_E2)
+			firmware = MT7603_FIRMWARE_E1;
+		else
+			firmware = MT7603_FIRMWARE_E2;
+	}
 
 	ret = request_firmware(&fw, firmware, dev->mt76.dev);
 	if (ret)
@@ -297,9 +305,14 @@ int mt7603_mcu_init(struct mt7603_dev *dev)
 	return mt7603_load_firmware(dev);
 }
 
-int mt7603_mcu_exit(struct mt7603_dev *dev)
+void mt7603_mcu_exit(struct mt7603_dev *dev)
 {
-	return mt7603_mcu_restart(dev);
+	struct sk_buff *skb;
+
+	mt7603_mcu_restart(dev);
+
+	while ((skb = skb_dequeue(&dev->mcu.res_q)) != NULL)
+		dev_kfree_skb(skb);
 }
 
 int mt7603_mcu_set_eeprom(struct mt7603_dev *dev)
@@ -475,6 +488,28 @@ int mt7603_mcu_set_channel(struct mt7603_dev *dev)
 		return ret;
 
 	return mt7603_mcu_set_tx_power(dev);
+}
+
+int mt7603_mcu_set_timing(struct mt7603_dev *dev, int slot, int sifs, int rifs,
+			  int eifs)
+{
+	struct {
+		u8 slot_time;
+		u8 sifs_time;
+		u8 rifs_time;
+		u8 __res0;
+		u16 eifs_time;
+		u16 __res1;
+	} req = {
+		.slot_time = slot,
+		.sifs_time = sifs,
+		.rifs_time = rifs,
+		.eifs_time = eifs,
+	};
+	struct sk_buff *skb;
+
+	skb = mt7603_mcu_msg_alloc(dev, &req, sizeof(req));
+	return mt7603_mcu_msg_send(dev, skb, MCU_EXT_CMD_SLOT_TIME_SET, MCU_Q_SET, NULL);
 }
 
 int mt7603_mcu_reg_read(struct mt7603_dev *dev, u32 reg, u32 *val, bool rf)

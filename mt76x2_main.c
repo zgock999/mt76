@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2
@@ -270,7 +270,7 @@ mt76x2_sta_remove(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	for (i = 0; i < ARRAY_SIZE(sta->txq); i++)
 		mt76_txq_remove(&dev->mt76, sta->txq[i]);
 	mt76_set(dev, MT_WCID_DROP(idx), MT_WCID_DROP_MASK(idx));
-	dev->wcid_mask[idx / BITS_PER_LONG] &= ~BIT(idx % BITS_PER_LONG);
+	mt76_wcid_free(dev->wcid_mask, idx);
 	mt76x2_mac_wcid_setup(dev, idx, 0, NULL);
 	mutex_unlock(&dev->mutex);
 
@@ -288,7 +288,7 @@ mt76x2_sta_notify(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	switch (cmd) {
 	case STA_NOTIFY_SLEEP:
 		mt76_set(dev, MT_WCID_DROP(idx), MT_WCID_DROP_MASK(idx));
-		mt76_stop_tx_queues(&dev->mt76, sta);
+		mt76_stop_tx_queues(&dev->mt76, sta, true);
 		break;
 	case STA_NOTIFY_AWAKE:
 		mt76_clear(dev, MT_WCID_DROP(idx), MT_WCID_DROP_MASK(idx));
@@ -445,6 +445,7 @@ mt76x2_ampdu_action(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 		ieee80211_start_tx_ba_cb_irqsafe(vif, sta->addr, tid);
 		break;
 	case IEEE80211_AMPDU_TX_STOP_CONT:
+		mtxq->aggr = false;
 		ieee80211_stop_tx_ba_cb_irqsafe(vif, sta->addr, tid);
 		break;
 	}

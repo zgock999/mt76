@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2
@@ -250,7 +250,7 @@ enum mt7603_tx_header_format {
 #define MT_TXS4_F0_SEQNO		GENMASK(11, 0)
 #define MT_TXS4_F1_TSSI			GENMASK(11, 0)
 
-#define MT_PID_NOACK			BIT(7)
-#define MT_PID_INDEX			GENMASK(6, 0)
+#define MT_PID_NOACK			GENMASK(7, 0)
+#define MT_PID_INDEX			GENMASK(7, 0)
 
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2
@@ -110,8 +110,8 @@ mt76x2_tx_tasklet(unsigned long data)
 
 	mt76x2_mac_process_tx_status_fifo(dev);
 
-	for (i = ARRAY_SIZE(dev->mt76.q_tx) - 1; i >= 0; i--)
-		mt76_queue_tx_cleanup(dev, &dev->mt76.q_tx[i], false);
+	for (i = MT_TXQ_MCU; i >= 0; i--)
+		mt76_queue_tx_cleanup(dev, i, false);
 
 	mt76x2_mac_poll_tx_status(dev, false);
 	mt76x2_irq_enable(dev, MT_INT_TX_DONE_ALL);

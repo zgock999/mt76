@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2
@@ -63,6 +63,8 @@ struct dentry *mt76_register_debugfs(struct mt76_dev *dev)
 	debugfs_create_u32("regidx", S_IRUSR | S_IWUSR, dir, &dev->debugfs_reg);
 	debugfs_create_file("regval", S_IRUSR | S_IWUSR, dir, dev, &fops_regval);
 	debugfs_create_blob("eeprom", S_IRUSR, dir, &dev->eeprom);
+	if (dev->otp.data)
+		debugfs_create_blob("otp", S_IRUSR, dir, &dev->otp);
 	debugfs_create_devm_seqfile(dev->dev, "queues", dir, mt76_queues_read);
 
 	return dir;

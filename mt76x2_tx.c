@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2
@@ -41,8 +41,6 @@ void mt76x2_tx(struct ieee80211_hw *hw, struct ieee80211_tx_control *control,
 void mt76x2_tx_complete(struct mt76x2_dev *dev, struct sk_buff *skb)
 {
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
-	struct mt76_queue *q;
-	int qid = skb_get_queue_mapping(skb);
 
 	if (info->flags & IEEE80211_TX_CTL_AMPDU) {
 		ieee80211_free_txskb(mt76_hw(dev), skb);
@@ -52,15 +50,12 @@ void mt76x2_tx_complete(struct mt76x2_dev *dev, struct sk_buff *skb)
 		info->flags |= IEEE80211_TX_STAT_ACK;
 		ieee80211_tx_status(mt76_hw(dev), skb);
 	}
-
-	q = &dev->mt76.q_tx[qid];
-	if (q->queued < q->ndesc - 8)
-		ieee80211_wake_queue(mt76_hw(dev), qid);
 }
 
 int mt76x2_tx_prepare_skb(struct mt76_dev *mdev, void *txwi,
-			  struct sk_buff *skb, struct mt76_wcid *wcid,
-			  struct ieee80211_sta *sta, u32 *tx_info)
+			  struct sk_buff *skb, struct mt76_queue *q,
+			  struct mt76_wcid *wcid, struct ieee80211_sta *sta,
+			  u32 *tx_info)
 {
 	struct mt76x2_dev *dev = container_of(mdev, struct mt76x2_dev, mt76);
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
@@ -90,7 +85,6 @@ mt76x2_update_beacon_iter(void *priv, u8 *mac, struct ieee80211_vif *vif)
 {
 	struct mt76x2_dev *dev = (struct mt76x2_dev *) priv;
 	struct mt76x2_vif *mvif = (struct mt76x2_vif *) vif->drv_priv;
-	struct ieee80211_tx_info *info;
 	struct sk_buff *skb = NULL;
 
 	if (!(dev->beacon_mask & BIT(mvif->idx)))
@@ -100,8 +94,6 @@ mt76x2_update_beacon_iter(void *priv, u8 *mac, struct ieee80211_vif *vif)
 	if (!skb)
 		return;
 
-	info = IEEE80211_SKB_CB(skb);
-	info->flags |= IEEE80211_TX_CTL_ASSIGN_SEQ;
 	mt76x2_mac_set_beacon(dev, mvif->idx, skb);
 }
 

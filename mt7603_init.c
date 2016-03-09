@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2
@@ -40,15 +40,6 @@ struct mt7603_dev *mt7603_alloc_device(struct device *pdev)
 	return dev;
 }
 
-static bool
-wait_for_wpdma(struct mt7603_dev *dev)
-{
-	return mt76_poll(dev, MT_WPDMA_GLO_CFG,
-			 MT_WPDMA_GLO_CFG_TX_DMA_BUSY |
-			 MT_WPDMA_GLO_CFG_RX_DMA_BUSY,
-			 0, 1000);
-}
-
 static void
 mt7603_set_tmac_template(struct mt7603_dev *dev)
 {
@@ -65,33 +56,11 @@ mt7603_set_tmac_template(struct mt7603_dev *dev)
 		mt76_wr(dev, addr + 4 * i, desc[i]);
 }
 
-static int
-mt7603_mac_early_init(struct mt7603_dev *dev)
-{
-	mt76_wr(dev, MT_WPDMA_GLO_CFG, 0x52000850);
-
-	mt76_clear(dev, MT_WF_ARB_SCR, MT_WF_ARB_TX_DISABLE | MT_WF_ARB_RX_DISABLE);
-	mt76_wr(dev, MT_WF_ARB_TX_START_0, ~0);
-	mt76_clear(dev, MT_WF_ARB_RQCR, MT_WF_ARB_RQCR_RX_START);
-
-	wait_for_wpdma(dev);
-	udelay(50);
-
-	mt76_set(dev, MT_WPDMA_GLO_CFG,
-		 (MT_WPDMA_GLO_CFG_TX_DMA_EN |
-		  MT_WPDMA_GLO_CFG_RX_DMA_EN |
-		  MT76_SET(MT_WPDMA_GLO_CFG_DMA_BURST_SIZE, 3) |
-		  MT_WPDMA_GLO_CFG_TX_WRITEBACK_DONE));
-
-	mt7603_irq_enable(dev, MT_INT_RX_DONE_ALL | MT_INT_TX_DONE_ALL);
-
-	return 0;
-}
-
 static void
 mt7603_dma_sched_init(struct mt7603_dev *dev)
 {
-	int page_size, page_count;
+	int page_size = 128;
+	int page_count;
 	int max_len = 1792;
 	int max_amsdu_len = 4096;
 	int max_mcu_len = 4096;
@@ -101,9 +70,8 @@ mt7603_dma_sched_init(struct mt7603_dev *dev)
 	int mcu_pages;
 	int i;
 
-	page_size = mt76_get_field(dev, MT_PSE_FC_P0,
-				   MT_PSE_FC_P0_MAX_QUOTA);
-	page_count = 0x1ae;
+	page_count = mt76_get_field(dev, MT_PSE_FC_P0,
+				    MT_PSE_FC_P0_MAX_QUOTA);
 	beacon_pages = max_beacon_len / page_size;
 	mcu_pages = max_mcu_len / page_size;
 
@@ -134,7 +102,7 @@ mt7603_dma_sched_init(struct mt7603_dev *dev)
 
 	mt76_wr(dev, MT_RSV_MAX_THRESH, page_count);
 
-	if (mt76xx_rev(dev) < MT7603_REV_E2) {
+	if (is_mt7603(dev) && mt76xx_rev(dev) < MT7603_REV_E2) {
 		mt76_wr(dev, MT_GROUP_THRESH(0), page_count);
 		mt76_wr(dev, MT_BMAP_0, 0xffff);
 	} else {
@@ -158,9 +126,7 @@ static void
 mt7603_phy_init(struct mt7603_dev *dev)
 {
 	int rx_chains = BIT(dev->rx_chains) - 1;
-	int tx_chains = BIT(dev->tx_chains) - 1;
-
-	mt76_wr(dev, MT_WF_PHY_CR_RXTD(39), 0x0004ba43);
+	int tx_chains = dev->tx_chains - 1;
 
 	mt76_rmw(dev, MT_WF_RMAC_RMCR,
 		 (MT_WF_RMAC_RMCR_SMPS_MODE |
@@ -168,7 +134,7 @@ mt7603_phy_init(struct mt7603_dev *dev)
 		 (MT76_SET(MT_WF_RMAC_RMCR_SMPS_MODE, 3) |
 		  MT76_SET(MT_WF_RMAC_RMCR_RX_STREAMS, rx_chains)));
 
-	mt76_rmw_field(dev, MT_WF_TMAC_TCR, MT_WF_TMAC_TCR_TX_STREAMS,
+	mt76_rmw_field(dev, MT_TMAC_TCR, MT_TMAC_TCR_TX_STREAMS,
 		       tx_chains);
 }
 
@@ -178,6 +144,39 @@ mt7603_mac_init(struct mt7603_dev *dev)
 	u8 bc_addr[ETH_ALEN];
 	u32 addr;
 	int i;
+
+	mt76_wr(dev, MT_AGG_BA_SIZE_LIMIT_0,
+		(MT_AGG_SIZE_LIMIT(0) << 0 * MT_AGG_BA_SIZE_LIMIT_SHIFT) |
+		(MT_AGG_SIZE_LIMIT(1) << 1 * MT_AGG_BA_SIZE_LIMIT_SHIFT) |
+		(MT_AGG_SIZE_LIMIT(2) << 2 * MT_AGG_BA_SIZE_LIMIT_SHIFT) |
+		(MT_AGG_SIZE_LIMIT(3) << 3 * MT_AGG_BA_SIZE_LIMIT_SHIFT));
+
+	mt76_wr(dev, MT_AGG_BA_SIZE_LIMIT_1,
+		(MT_AGG_SIZE_LIMIT(4) << 0 * MT_AGG_BA_SIZE_LIMIT_SHIFT) |
+		(MT_AGG_SIZE_LIMIT(5) << 1 * MT_AGG_BA_SIZE_LIMIT_SHIFT) |
+		(MT_AGG_SIZE_LIMIT(6) << 2 * MT_AGG_BA_SIZE_LIMIT_SHIFT) |
+		(MT_AGG_SIZE_LIMIT(7) << 3 * MT_AGG_BA_SIZE_LIMIT_SHIFT));
+
+	mt76_wr(dev, MT_AGG_LIMIT,
+		MT76_SET(MT_AGG_LIMIT_AC(0), 21) |
+		MT76_SET(MT_AGG_LIMIT_AC(1), 21) |
+		MT76_SET(MT_AGG_LIMIT_AC(2), 21) |
+		MT76_SET(MT_AGG_LIMIT_AC(3), 21));
+
+	mt76_wr(dev, MT_AGG_LIMIT_1,
+		MT76_SET(MT_AGG_LIMIT_AC(0), 21) |
+		MT76_SET(MT_AGG_LIMIT_AC(1), 21) |
+		MT76_SET(MT_AGG_LIMIT_AC(2), 21) |
+		MT76_SET(MT_AGG_LIMIT_AC(3), 21));
+
+	mt76_wr(dev, MT_AGG_CONTROL,
+		MT76_SET(MT_AGG_CONTROL_BAR_RATE, 0x80) |
+		MT76_SET(MT_AGG_CONTROL_CFEND_RATE, 0x69) |
+		MT_AGG_CONTROL_NO_BA_AR_RULE);
+
+	mt76_wr(dev, MT_AGG_RETRY_CONTROL,
+		MT76_SET(MT_AGG_RETRY_CONTROL_BAR_LIMIT, 1) |
+		MT76_SET(MT_AGG_RETRY_CONTROL_RTS_LIMIT, 15));
 
 	mt76_rmw(dev, MT_DMA_DCR0, ~0xfffc, MT_RX_BUF_SIZE);
 
@@ -191,6 +190,8 @@ mt7603_mac_init(struct mt7603_dev *dev)
 
 	mt76_wr(dev, MT_WF_RFCR1, 0);
 
+	mt76_set(dev, MT_TMAC_TCR, MT_TMAC_TCR_RX_RIFS_MODE);
+
 	mt7603_set_tmac_template(dev);
 
 	/* Enable RX group to HIF */
@@ -200,8 +201,19 @@ mt7603_mac_init(struct mt7603_dev *dev)
 	/* Enable RX group to MCU */
 	mt76_set(dev, MT_DMA_DCR1, GENMASK(13, 11));
 
+	mt76_rmw_field(dev, MT_AGG_PCR_RTS, MT_AGG_PCR_RTS_PKT_THR, 3);
+	mt76_set(dev, MT_TMAC_PCR, MT_TMAC_PCR_SPE_EN);
+	mt76_wr(dev, MT_RXREQ, 4);
+
 	/* Configure all rx packets to HIF */
-	mt76_wr(dev, MT_DMA_RCFR0, 0xc0200000);
+	mt76_wr(dev, MT_DMA_RCFR0, 0xc0000000);
+
+	/* Configure txs selection with aggregation */
+	mt76_wr(dev, MT_DMA_TCFR1,
+		MT76_SET(MT_DMA_TCFR1_TXS_AGGR_TIMEOUT, 1) | /* 32 us */
+		MT_DMA_TCFR1_TXS_AGGR_COUNT | /* Maximum count */
+		MT_DMA_TCFR1_TXS_QUEUE | /* Queue 1 */
+		MT_DMA_TCFR1_TXS_BIT_MAP);
 
 	mt76_wr(dev, MT_MCU_PCIE_REMAP_1, MT_PSE_WTBL_2_PHYS_ADDR);
 
@@ -230,6 +242,10 @@ mt7603_mac_init(struct mt7603_dev *dev)
 
 	mt76_wr(dev, MT_AGG_ARCR, (MT_AGG_ARCR_INIT_RATE1 |
 				   MT76_SET(MT_AGG_ARCR_RTS_RATE_THR, 2)));
+
+	mt76_set(dev, MT_WTBL_RMVTCR, MT_WTBL_RMVTCR_RX_MV_MODE);
+
+	mt76_clear(dev, MT_SEC_SCR, MT_SEC_SCR_MASK_ORDER);
 }
 
 static int
@@ -239,23 +255,17 @@ mt7603_init_hardware(struct mt7603_dev *dev)
 
 	mt76_wr(dev, MT_INT_SOURCE_CSR, ~0);
 
-	ret = mt76_eeprom_init(&dev->mt76, MT7603_EEPROM_SIZE);
+	ret = mt7603_eeprom_init(dev);
 	if (ret < 0)
 		return ret;
 
-	dev->mt76.cap.has_2ghz = true;
-	memcpy(dev->mt76.macaddr, dev->mt76.eeprom.data + MT_EE_MAC_ADDR,
-	       ETH_ALEN);
-	mt76_eeprom_override(&dev->mt76);
-
+	mt7603_mac_reset(dev);
 	ret = mt7603_dma_init(dev);
 	if (ret)
 		return ret;
 
-	ret = mt7603_mac_early_init(dev);
-	if (ret)
-		return ret;
-
+	mt76_wr(dev, MT_WPDMA_GLO_CFG, 0x52000850);
+	mt7603_mac_dma_start(dev);
 	dev->rxfilter = mt76_rr(dev, MT_WF_RFCR);
 	set_bit(MT76_STATE_INITIALIZED, &dev->mt76.state);
 
@@ -332,7 +342,10 @@ int mt7603_register_device(struct mt7603_dev *dev)
 
 	mutex_init(&dev->mutex);
 	spin_lock_init(&dev->status_lock);
-	INIT_LIST_HEAD(&dev->status_list);
+	__skb_queue_head_init(&dev->status_list);
+
+	INIT_DELAYED_WORK(&dev->mac_work, mt7603_mac_work);
+	tasklet_init(&dev->pre_tbtt_tasklet, mt7603_pre_tbtt_tasklet, (unsigned long) dev);
 
 	dev->rx_chains = 2;
 	dev->tx_chains = 2;
@@ -343,10 +356,9 @@ int mt7603_register_device(struct mt7603_dev *dev)
 		return ret;
 
 	hw->queues = 4;
-	hw->max_rates = 1;
+	hw->max_rates = 3;
 	hw->max_report_rates = 7;
-	hw->max_rate_tries = 1;
-	hw->extra_tx_headroom = 2;
+	hw->max_rate_tries = 11;
 
 	hw->sta_data_size = sizeof(struct mt7603_sta);
 	hw->vif_data_size = sizeof(struct mt7603_vif);
@@ -364,15 +376,15 @@ int mt7603_register_device(struct mt7603_dev *dev)
 	sband = wiphy->bands[IEEE80211_BAND_2GHZ];
 	dev->chandef.chan = &sband->channels[0];
 
-	mt76_register_debugfs(&dev->mt76);
+	mt7603_init_debugfs(dev);
 
 	return 0;
 }
 
 void mt7603_unregister_device(struct mt7603_dev *dev)
 {
-	mt7603_mac_status_skb(dev, NULL, -1);
 	mt76_unregister_device(&dev->mt76);
+	mt7603_mac_status_skb(dev, NULL, -1);
 	mt7603_mcu_exit(dev);
 	mt7603_dma_cleanup(dev);
 	ieee80211_free_hw(mt76_hw(dev));

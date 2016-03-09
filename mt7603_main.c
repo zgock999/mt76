@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2
@@ -11,6 +11,10 @@
  * GNU General Public License for more details.
  */
 
+#include <linux/etherdevice.h>
+#include <linux/platform_device.h>
+#include <linux/pci.h>
+#include <linux/module.h>
 #include "mt7603.h"
 #include "mt7603_eeprom.h"
 
@@ -20,6 +24,10 @@ mt7603_start(struct ieee80211_hw *hw)
 	struct mt7603_dev *dev = hw->priv;
 
 	mt7603_mac_start(dev);
+	mt7603_mac_watchdog_reset(dev);
+	ieee80211_queue_delayed_work(mt76_hw(dev), &dev->mac_work,
+				     MT7603_WATCHDOG_TIME);
+	set_bit(MT76_STATE_RUNNING, &dev->mt76.state);
 
 	return 0;
 }
@@ -29,6 +37,8 @@ mt7603_stop(struct ieee80211_hw *hw)
 {
 	struct mt7603_dev *dev = hw->priv;
 
+	clear_bit(MT76_STATE_RUNNING, &dev->mt76.state);
+	cancel_delayed_work_sync(&dev->mac_work);
 	mt7603_mac_stop(dev);
 }
 
@@ -57,6 +67,7 @@ mt7603_add_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 {
 	struct mt7603_vif *mvif = (struct mt7603_vif *) vif->drv_priv;
 	struct mt7603_dev *dev = hw->priv;
+	u8 bc_addr[ETH_ALEN];
 	int idx;
 	int ret = 0;
 
@@ -78,6 +89,10 @@ mt7603_add_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 	dev->vif_mask |= BIT(mvif->idx);
 	mvif->sta.wcid.idx = idx;
 	mvif->sta.wcid.hw_key_idx = -1;
+
+	eth_broadcast_addr(bc_addr);
+	mt7603_wtbl_init(dev, idx, bc_addr);
+
 	rcu_assign_pointer(dev->wcid[idx], &mvif->sta.wcid);
 	mt7603_txq_init(dev, vif->txq);
 
@@ -93,6 +108,8 @@ mt7603_remove_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 	struct mt7603_vif *mvif = (struct mt7603_vif *) vif->drv_priv;
 	struct mt7603_dev *dev = hw->priv;
 	int idx = mvif->sta.wcid.idx;
+
+	mt7603_beacon_set_timer(dev, mvif->idx, 0);
 
 	rcu_assign_pointer(dev->wcid[idx], NULL);
 	mt76_txq_remove(&dev->mt76, vif->txq);
@@ -166,7 +183,6 @@ mt7603_configure_filter(struct ieee80211_hw *hw, unsigned int changed_flags,
 		dev->rxfilter |= !(flags & FIF_##_flag) * (_hw);	\
 	} while (0)
 
-	dev->rxfilter |= MT_WF_RFCR_DROP_STBC_MULTI;
 	dev->rxfilter &= ~(MT_WF_RFCR_DROP_OTHER_BSS |
 			   MT_WF_RFCR_DROP_OTHER_BEACON |
 			   MT_WF_RFCR_DROP_FRAME_REPORT |
@@ -174,18 +190,19 @@ mt7603_configure_filter(struct ieee80211_hw *hw, unsigned int changed_flags,
 			   MT_WF_RFCR_DROP_MCAST_FILTERED |
 			   MT_WF_RFCR_DROP_MCAST |
 			   MT_WF_RFCR_DROP_BCAST |
-			   MT_WF_RFCR_DROP_DUPLICATE);
+			   MT_WF_RFCR_DROP_DUPLICATE |
+			   MT_WF_RFCR_DROP_A2_BSSID |
+			   MT_WF_RFCR_DROP_UNWANTED_CTL |
+			   MT_WF_RFCR_DROP_STBC_MULTI);
 
 	MT76_FILTER(OTHER_BSS, MT_WF_RFCR_DROP_OTHER_UC |
 			       MT_WF_RFCR_DROP_OTHER_TIM |
 			       MT_WF_RFCR_DROP_A3_MAC |
-			       MT_WF_RFCR_DROP_A3_BSSID |
-			       MT_WF_RFCR_DROP_A2_BSSID);
+			       MT_WF_RFCR_DROP_A3_BSSID);
 
 	MT76_FILTER(FCSFAIL, MT_WF_RFCR_DROP_FCSFAIL);
 
-	MT76_FILTER(CONTROL, MT_WF_RFCR_DROP_UNWANTED_CTL |
-			     MT_WF_RFCR_DROP_CTS |
+	MT76_FILTER(CONTROL, MT_WF_RFCR_DROP_CTS |
 			     MT_WF_RFCR_DROP_RTS |
 			     MT_WF_RFCR_DROP_CTL_RSV |
 			     MT_WF_RFCR_DROP_NDPA);
@@ -196,15 +213,30 @@ mt7603_configure_filter(struct ieee80211_hw *hw, unsigned int changed_flags,
 
 static void
 mt7603_bss_info_changed(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
-		      struct ieee80211_bss_conf *info, u32 changed)
+			struct ieee80211_bss_conf *info, u32 changed)
 {
 	struct mt7603_dev *dev = hw->priv;
+	struct mt7603_vif *mvif = (struct mt7603_vif *) vif->drv_priv;
 
 	mutex_lock(&dev->mutex);
+
+	if (changed & BSS_CHANGED_ASSOC) {
+		mt76_wr(dev, MT_BSSID0(mvif->idx),
+			get_unaligned_le32(info->bssid));
+		mt76_wr(dev, MT_BSSID1(mvif->idx),
+			get_unaligned_le16(info->bssid + 4));
+	}
 
 	if (changed & BSS_CHANGED_ERP_SLOT) {
 		dev->slottime = info->use_short_slot ? 9 : 20;
 		mt7603_mac_set_timing(dev);
+	}
+
+	if (changed & (BSS_CHANGED_BEACON_ENABLED | BSS_CHANGED_BEACON_INT)) {
+		int beacon_int = !!info->enable_beacon * info->beacon_int;
+		tasklet_disable(&dev->pre_tbtt_tasklet);
+		mt7603_beacon_set_timer(dev, mvif->idx, beacon_int);
+		tasklet_enable(&dev->pre_tbtt_tasklet);
 	}
 
 	mutex_unlock(&dev->mutex);
@@ -258,6 +290,8 @@ mt7603_sta_remove(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	for (i = 0; i < ARRAY_SIZE(sta->txq); i++)
 		mt76_txq_remove(&dev->mt76, sta->txq[i]);
 
+	mt76_wcid_free(dev->wcid_mask, idx);
+
 	mutex_unlock(&dev->mutex);
 
 	return 0;
@@ -267,6 +301,19 @@ static void
 mt7603_sta_notify(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 		enum sta_notify_cmd cmd, struct ieee80211_sta *sta)
 {
+	struct mt7603_dev *dev = hw->priv;
+	struct mt7603_sta *msta = (struct mt7603_sta *) sta->drv_priv;
+	int idx = msta->wcid.idx;
+
+	switch (cmd) {
+	case STA_NOTIFY_SLEEP:
+		mt7603_wtbl_set_ps(dev, idx, true);
+		mt76_stop_tx_queues(&dev->mt76, sta, false);
+		break;
+	case STA_NOTIFY_AWAKE:
+		mt7603_wtbl_set_ps(dev, idx, false);
+		break;
+	}
 }
 
 static int
@@ -274,7 +321,23 @@ mt7603_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 	     struct ieee80211_vif *vif, struct ieee80211_sta *sta,
 	     struct ieee80211_key_conf *key)
 {
-	return -EINVAL;
+	struct mt7603_dev *dev = hw->priv;
+	struct mt7603_vif *mvif = (struct mt7603_vif *) vif->drv_priv;
+	struct mt7603_sta *msta = sta ? (struct mt7603_sta *) sta->drv_priv : NULL;
+	struct mt76_wcid *wcid = msta ? &msta->wcid : &mvif->sta.wcid;
+	int idx = key->keyidx;
+
+	if (cmd == SET_KEY) {
+		key->hw_key_idx = wcid->idx;
+		wcid->hw_key_idx = idx;
+	} else {
+		if (idx == wcid->hw_key_idx)
+			wcid->hw_key_idx = -1;
+
+		key = NULL;
+	}
+
+	return mt7603_wtbl_set_key(dev, wcid->idx, key);
 }
 
 static int
@@ -285,6 +348,8 @@ mt7603_conf_tx(struct ieee80211_hw *hw, struct ieee80211_vif *vif, u16 queue,
 	u16 cw_min = (1 << 5) - 1;
 	u16 cw_max = (1 << 10) - 1;
 	u32 val;
+
+	queue = dev->mt76.q_tx[queue].hw_idx;
 
 	if (params->cw_min)
 		cw_min = params->cw_min;
@@ -353,7 +418,48 @@ static int
 mt7603_ampdu_action(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 		    struct ieee80211_ampdu_params *params)
 {
-	return -EINVAL;
+	enum ieee80211_ampdu_mlme_action action = params->action;
+	struct mt7603_dev *dev = hw->priv;
+	struct ieee80211_sta *sta = params->sta;
+	struct ieee80211_txq *txq = sta->txq[params->tid];
+	struct mt7603_sta *msta = (struct mt7603_sta *) sta->drv_priv;
+	struct mt76_txq *mtxq = (struct mt76_txq *) txq->drv_priv;
+	u16 tid = params->tid;
+	u16 *ssn = &params->ssn;
+	u8 ba_size = params->buf_size;
+
+	if (!txq)
+		return -EINVAL;
+
+	switch (action) {
+	case IEEE80211_AMPDU_RX_START:
+		mt7603_mac_rx_ba_reset(dev, sta->addr, tid);
+		break;
+	case IEEE80211_AMPDU_RX_STOP:
+		break;
+	case IEEE80211_AMPDU_TX_OPERATIONAL:
+		mtxq->aggr = true;
+		mtxq->send_bar = false;
+		mt7603_mac_tx_ba_reset(dev, msta->wcid.idx, tid, *ssn, ba_size);
+		break;
+	case IEEE80211_AMPDU_TX_STOP_FLUSH:
+	case IEEE80211_AMPDU_TX_STOP_FLUSH_CONT:
+		mtxq->aggr = false;
+		ieee80211_send_bar(vif, sta->addr, tid, mtxq->agg_ssn);
+		mt7603_mac_tx_ba_reset(dev, msta->wcid.idx, tid, *ssn, -1);
+		break;
+	case IEEE80211_AMPDU_TX_START:
+		mtxq->agg_ssn = *ssn << 4;
+		ieee80211_start_tx_ba_cb_irqsafe(vif, sta->addr, tid);
+		break;
+	case IEEE80211_AMPDU_TX_STOP_CONT:
+		mtxq->aggr = false;
+		mt7603_mac_tx_ba_reset(dev, msta->wcid.idx, tid, *ssn, -1);
+		ieee80211_stop_tx_ba_cb_irqsafe(vif, sta->addr, tid);
+		break;
+	}
+
+	return 0;
 }
 
 static void
@@ -418,3 +524,32 @@ const struct ieee80211_ops mt7603_ops = {
 	.release_buffered_frames = mt76_release_buffered_frames,
 	.set_coverage_class = mt7603_set_coverage_class,
 };
+
+MODULE_LICENSE("GPL");
+
+static int __init mt7603_init(void)
+{
+	int ret;
+
+	ret = platform_driver_register(&mt76_wmac_driver);
+	if (ret)
+		return ret;
+
+#ifdef CONFIG_PCI
+	ret = pci_register_driver(&mt7603_pci_driver);
+	if (ret)
+		platform_driver_unregister(&mt76_wmac_driver);
+#endif
+	return ret;
+}
+
+static void __exit mt7603_exit(void)
+{
+#ifdef CONFIG_PCI
+	pci_unregister_driver(&mt7603_pci_driver);
+#endif
+	platform_driver_unregister(&mt76_wmac_driver);
+}
+
+module_init(mt7603_init);
+module_exit(mt7603_exit);

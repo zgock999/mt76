@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2
@@ -123,9 +123,18 @@ mt76_dma_tx_cleanup_idx(struct mt76_dev *dev, struct mt76_queue *q, int idx,
 }
 
 static void
-mt76_dma_tx_cleanup(struct mt76_dev *dev, struct mt76_queue *q, bool flush)
+mt76_dma_sync_idx(struct mt76_dev *dev, struct mt76_queue *q)
 {
+	q->tail = q->head = ioread32(&q->regs->dma_idx);
+	iowrite32(q->head, &q->regs->cpu_idx);
+}
+
+static void
+mt76_dma_tx_cleanup(struct mt76_dev *dev, enum mt76_txq_id qid, bool flush)
+{
+	struct mt76_queue *q = &dev->q_tx[qid];
 	struct mt76_queue_entry entry;
+	bool wake = false;
 	int last;
 
 	if (!q->ndesc)
@@ -145,18 +154,28 @@ mt76_dma_tx_cleanup(struct mt76_dev *dev, struct mt76_queue *q, bool flush)
 		if (entry.skb)
 			dev->drv->tx_complete_skb(dev, q, &entry, flush);
 
-		if (entry.txwi)
+		if (entry.txwi) {
 			mt76_put_txwi(dev, entry.txwi);
+			wake = true;
+		}
 
 		q->tail = (q->tail + 1) % q->ndesc;
 		q->queued--;
 
-		if (q->tail == last)
+		if (!flush && q->tail == last)
 		    last = ioread32(&q->regs->dma_idx);
 	}
+
 	if (!flush)
 		mt76_txq_schedule(dev, q);
+	else
+		mt76_dma_sync_idx(dev, q);
+
+	wake = wake && qid < IEEE80211_NUM_ACS && q->queued < q->ndesc - 8;
 	spin_unlock_bh(&q->lock);
+
+	if (wake)
+		ieee80211_wake_queue(dev->hw, qid);
 }
 
 static void *
@@ -273,6 +292,20 @@ mt76_dma_rx_cleanup(struct mt76_dev *dev, struct mt76_queue *q)
 }
 
 static void
+mt76_dma_rx_reset(struct mt76_dev *dev, enum mt76_rxq_id qid)
+{
+	struct mt76_queue *q = &dev->q_rx[qid];
+	int i;
+
+	for (i = 0; i < q->ndesc; i++)
+		q->desc[i].ctrl &= ~cpu_to_le32(MT_DMA_CTL_DMA_DONE);
+
+	mt76_dma_rx_cleanup(dev, q);
+	mt76_dma_sync_idx(dev, q);
+	mt76_dma_rx_fill(dev, q, false);
+}
+
+static void
 mt76_add_fragment(struct mt76_dev *dev, struct mt76_queue *q, void *data,
 		    int len, bool more)
 {
@@ -385,6 +418,7 @@ static const struct mt76_queue_ops mt76_dma_ops = {
 	.alloc = mt76_dma_alloc_queue,
 	.add_buf = mt76_dma_add_buf,
 	.tx_cleanup = mt76_dma_tx_cleanup,
+	.rx_reset = mt76_dma_rx_reset,
 	.kick = mt76_dma_kick_queue,
 };
 
@@ -400,7 +434,7 @@ void mt76_dma_cleanup(struct mt76_dev *dev)
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(dev->q_tx); i++)
-		mt76_dma_tx_cleanup(dev, &dev->q_tx[i], true);
+		mt76_dma_tx_cleanup(dev, i, true);
 
 	for (i = 0; i < ARRAY_SIZE(dev->q_rx); i++) {
 		netif_napi_del(&dev->napi[i]);
