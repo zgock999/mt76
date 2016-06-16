@@ -1,4 +1,8 @@
-EXTRA_CFLAGS += -Werror
+MOD_DIR = /home/lorenzo/workspace/mt76
+KERNEL_DIR = /home/lorenzo/workspace/mac80211-next
+EXTRA_CFLAGS += -Werror -I$(MOD_DIR) -I$(KERNEL_DIR)
+
+ifneq ($(KERNELRELEASE),)
 
 obj-m := mt76.o mt76x2e.o mt7603e.o
 
@@ -15,3 +19,11 @@ mt7603e-y := \
 	mt7603_pci.o mt7603_soc.o mt7603_main.o mt7603_init.o mt7603_mcu.o \
 	mt7603_core.o mt7603_dma.o mt7603_mac.o mt7603_eeprom.o \
 	mt7603_beacon.o mt7603_debugfs.o
+else
+
+all:
+	$(MAKE) -C $(KERNEL_DIR) M=$(MOD_DIR) modules
+clean:
+	rm -f *.o *.ko
+
+endif
