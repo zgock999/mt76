@@ -2,6 +2,7 @@
 *.o
 *.ko
 *.mod.c
+*.vim
 Module.symvers
 modules.order
 ipkg-*
