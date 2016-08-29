@@ -150,8 +150,10 @@ mt76x2_config(struct ieee80211_hw *hw, u32 changed)
 	if (changed & IEEE80211_CONF_CHANGE_POWER) {
 		dev->txpower_conf = hw->conf.power_level * 2;
 
-		if (test_bit(MT76_STATE_RUNNING, &dev->mt76.state))
+		if (test_bit(MT76_STATE_RUNNING, &dev->mt76.state)) {
 			mt76x2_phy_set_txpower(dev);
+			mt76x2_tx_set_txpwr_auto(dev, dev->txpower_conf);
+		}
 	}
 
 	if (changed & IEEE80211_CONF_CHANGE_CHANNEL) {
@@ -478,6 +480,7 @@ mt76x2_sta_rate_tbl_update(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	rate.idx = rates->rate[0].idx;
 	rate.flags = rates->rate[0].flags;
 	mt76x2_mac_wcid_set_rate(dev, &msta->wcid, &rate);
+	msta->wcid.max_txpwr_adj = mt76x3_tx_get_max_txpwr_adj(dev, &rate);
 }
 
 static void mt76x2_set_coverage_class(struct ieee80211_hw *hw,
