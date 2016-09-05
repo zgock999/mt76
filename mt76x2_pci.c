@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -54,7 +54,7 @@ mt76pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	mt76_mmio_init(&dev->mt76, pcim_iomap_table(pdev)[0]);
 
 	dev->mt76.rev = mt76_rr(dev, MT_ASIC_VERSION);
-	dev_printk(KERN_INFO, dev->mt76.dev, "ASIC revision: %08x\n", dev->mt76.rev);
+	dev_info(dev->mt76.dev, "ASIC revision: %08x\n", dev->mt76.rev);
 
 	ret = devm_request_irq(dev->mt76.dev, pdev->irq, mt76x2_irq_handler,
 			       IRQF_SHARED, KBUILD_MODNAME, dev);
@@ -97,7 +97,7 @@ mt76pci_remove(struct pci_dev *pdev)
 MODULE_DEVICE_TABLE(pci, mt76pci_device_table);
 MODULE_FIRMWARE(MT7662_FIRMWARE);
 MODULE_FIRMWARE(MT7662_ROM_PATCH);
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("Dual BSD/GPL");
 
 static struct pci_driver mt76pci_driver = {
 	.name		= KBUILD_MODNAME,

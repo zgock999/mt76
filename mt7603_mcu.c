@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -248,7 +248,7 @@ mt7603_load_firmware(struct mt7603_dev *dev)
 
 	/* switch to bypass mode */
 	mt76_rmw(dev, MT_SCH_4, MT_SCH_4_FORCE_QID,
-		 MT_SCH_4_BYPASS | MT76_SET(MT_SCH_4_FORCE_QID, 5));
+		 MT_SCH_4_BYPASS | FIELD_PREP(MT_SCH_4_FORCE_QID, 5));
 
 	val = mt76_rr(dev, MT_TOP_MISC2);
 	if (val & BIT(1)) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -128,8 +128,9 @@ struct mt76x2_tssi_comp {
 } __packed __aligned(4);
 
 int mt76x2_mcu_calibrate(struct mt76x2_dev *dev, enum mcu_calibration type,
-		       u32 param);
+			 u32 param);
 int mt76x2_mcu_tssi_comp(struct mt76x2_dev *dev, struct mt76x2_tssi_comp *data);
-int mt76x2_mcu_init_gain(struct mt76x2_dev *dev, u8 channel, u32 gain, bool force);
+int mt76x2_mcu_init_gain(struct mt76x2_dev *dev, u8 channel, u32 gain,
+			 bool force);
 
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -534,7 +534,7 @@ const struct ieee80211_ops mt7603_ops = {
 	.set_coverage_class = mt7603_set_coverage_class,
 };
 
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("Dual BSD/GPL");
 
 static int __init mt7603_init(void)
 {

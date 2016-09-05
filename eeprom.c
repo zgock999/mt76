@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -102,11 +102,10 @@ mt76_eeprom_override(struct mt76_dev *dev)
 
 	if (!is_valid_ether_addr(dev->macaddr)) {
 		eth_random_addr(dev->macaddr);
-		dev_printk(KERN_INFO, dev->dev,
-			   "Invalid MAC address, using random address %pM\n",
-			   dev->macaddr);
+		dev_info(dev->dev,
+			 "Invalid MAC address, using random address %pM\n",
+			 dev->macaddr);
 	}
-
 }
 EXPORT_SYMBOL_GPL(mt76_eeprom_override);
 

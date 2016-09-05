@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -22,7 +22,7 @@
 
 static int
 mt76x2_eeprom_copy(struct mt76x2_dev *dev, enum mt76x2_eeprom_field field,
-		 void *dest, int len)
+		   void *dest, int len)
 {
 	if (field + len > dev->mt76.eeprom.size)
 		return -1;
@@ -45,7 +45,7 @@ mt76x2_eeprom_parse_hw_cap(struct mt76x2_dev *dev)
 {
 	u16 val = MT_EE_NIC_CONF_0;
 
-	switch (MT76_GET(MT_EE_NIC_CONF_0_BOARD_TYPE, val)) {
+	switch (FIELD_GET(MT_EE_NIC_CONF_0_BOARD_TYPE, val)) {
 	case BOARD_TYPE_5GHZ:
 		dev->mt76.cap.has_5ghz = true;
 		break;
@@ -68,7 +68,7 @@ mt76x2_efuse_read(struct mt76x2_dev *dev, u16 addr, u8 *data)
 	val = mt76_rr(dev, MT_EFUSE_CTRL);
 	val &= ~(MT_EFUSE_CTRL_AIN |
 		 MT_EFUSE_CTRL_MODE);
-	val |= MT76_SET(MT_EFUSE_CTRL_AIN, addr & ~0xf);
+	val |= FIELD_PREP(MT_EFUSE_CTRL_AIN, addr & ~0xf);
 	val |= MT_EFUSE_CTRL_KICK;
 	mt76_wr(dev, MT_EFUSE_CTRL, val);
 
@@ -84,8 +84,8 @@ mt76x2_efuse_read(struct mt76x2_dev *dev, u16 addr, u8 *data)
 	}
 
 	for (i = 0; i < 4; i++) {
-	    val = mt76_rr(dev, MT_EFUSE_DATA(i));
-	    put_unaligned_le32(val, data + 4 * i);
+		val = mt76_rr(dev, MT_EFUSE_DATA(i));
+		put_unaligned_le32(val, data + 4 * i);
 	}
 
 	return 0;
@@ -108,27 +108,28 @@ mt76x2_get_efuse_data(struct mt76x2_dev *dev, void *buf, int len)
 static bool
 mt76x2_has_cal_free_data(struct mt76x2_dev *dev, u8 *efuse)
 {
-	if (get_unaligned_le16(efuse + MT_EE_NIC_CONF_0) != 0)
+	u16 *efuse_w = (u16 *) efuse;
+
+	if (efuse_w[MT_EE_NIC_CONF_0] != 0)
 		return false;
 
-	if (get_unaligned_le16(efuse + MT_EE_XTAL_TRIM_1) == 0xffff)
+	if (efuse_w[MT_EE_XTAL_TRIM_1] == 0xffff)
 		return false;
 
-	if (get_unaligned_le16(efuse + MT_EE_TX_POWER_DELTA_BW40) != 0)
+	if (efuse_w[MT_EE_TX_POWER_DELTA_BW40] != 0)
 		return false;
 
-	if (get_unaligned_le16(efuse + MT_EE_TX_POWER_0_START_2G) == 0xffff)
+	if (efuse_w[MT_EE_TX_POWER_0_START_2G] == 0xffff)
 		return false;
 
-	if (get_unaligned_le16(efuse + MT_EE_TX_POWER_0_GRP3_TX_POWER_DELTA) != 0)
+	if (efuse_w[MT_EE_TX_POWER_0_GRP3_TX_POWER_DELTA] != 0)
 		return false;
 
-	if (get_unaligned_le16(efuse + MT_EE_TX_POWER_0_GRP4_TSSI_SLOPE) == 0xffff)
+	if (efuse_w[MT_EE_TX_POWER_0_GRP4_TSSI_SLOPE] == 0xffff)
 		return false;
 
 	return true;
 }
-
 
 static void
 mt76x2_apply_cal_free_data(struct mt76x2_dev *dev, u8 *efuse)
@@ -172,16 +173,19 @@ mt76x2_apply_cal_free_data(struct mt76x2_dev *dev, u8 *efuse)
 	int i;
 
 	if (!mt76x2_has_cal_free_data(dev, efuse))
-	    return;
+		return;
 
 	for (i = 0; i < ARRAY_SIZE(cal_free_bytes); i++) {
-	    int offset = cal_free_bytes[i];
-	    eeprom[offset] = efuse[offset];
+		int offset = cal_free_bytes[i];
+
+		eeprom[offset] = efuse[offset];
 	}
 
-	if (!(efuse[MT_EE_TX_POWER_0_START_5G] | efuse[MT_EE_TX_POWER_0_START_5G + 1]))
+	if (!(efuse[MT_EE_TX_POWER_0_START_5G] |
+	      efuse[MT_EE_TX_POWER_0_START_5G + 1]))
 		memcpy(eeprom + MT_EE_TX_POWER_0_START_5G, prev_grp0, 2);
-	if (!(efuse[MT_EE_TX_POWER_1_START_5G] | efuse[MT_EE_TX_POWER_1_START_5G + 1]))
+	if (!(efuse[MT_EE_TX_POWER_1_START_5G] |
+	      efuse[MT_EE_TX_POWER_1_START_5G + 1]))
 		memcpy(eeprom + MT_EE_TX_POWER_1_START_5G, prev_grp0 + 2, 2);
 
 	val = get_unaligned_le16(efuse + MT_EE_BT_RCAL_RESULT);
@@ -200,12 +204,13 @@ mt76x2_apply_cal_free_data(struct mt76x2_dev *dev, u8 *efuse)
 static int mt76x2_check_eeprom(struct mt76x2_dev *dev)
 {
 	u16 val = get_unaligned_le16(dev->mt76.eeprom.data);
+
 	switch (val) {
 	case 0x7662:
 	case 0x7612:
 		return 0;
 	default:
-		printk("EEPROM data check failed: %04x\n", val);
+		dev_err(dev->mt76.dev, "EEPROM data check failed: %04x\n", val);
 		return -EINVAL;
 	}
 }
@@ -252,17 +257,20 @@ out:
 }
 
 static inline int
-mt76x2_sign_extend(u32 val, unsigned size)
+mt76x2_sign_extend(u32 val, unsigned int size)
 {
 	bool sign = val & BIT(size - 1);
+
 	val &= BIT(size - 1) - 1;
+
 	return sign ? val : -val;
 }
 
 static inline int
-mt76x2_sign_extend_optional(u32 val, unsigned size)
+mt76x2_sign_extend_optional(u32 val, unsigned int size)
 {
 	bool enable = val & BIT(size);
+
 	return enable ? mt76x2_sign_extend(val, size) : 0;
 }
 
@@ -319,8 +327,9 @@ mt76x2_get_cal_channel_group(int channel)
 static u8
 mt76x2_get_5g_rx_gain(struct mt76x2_dev *dev, u8 channel)
 {
-	enum mt76x2_cal_channel_group group = mt76x2_get_cal_channel_group(channel);
+	enum mt76x2_cal_channel_group group;
 
+	group = mt76x2_get_cal_channel_group(channel);
 	switch (group) {
 	case MT_CH_5G_JAPAN:
 		return mt76x2_eeprom_get(dev, MT_EE_RF_5G_GRP0_1_RX_HIGH_GAIN);
@@ -502,11 +511,12 @@ mt76x2_get_power_info_5g(struct mt76x2_dev *dev, struct mt76x2_tx_power_info *t,
 		       int chain, int offset)
 {
 	int channel = dev->mt76.chandef.chan->hw_value;
-	enum mt76x2_cal_channel_group group = mt76x2_get_cal_channel_group(channel);
+	enum mt76x2_cal_channel_group group;
 	int delta_idx;
 	u16 val;
 	u8 data[5];
 
+	group = mt76x2_get_cal_channel_group(channel);
 	offset += group * MT_TX_POWER_GROUP_SIZE_5G;
 
 	if (channel >= 192)
@@ -545,9 +555,11 @@ mt76x2_get_power_info_5g(struct mt76x2_dev *dev, struct mt76x2_tx_power_info *t,
 	t->target_power = val & 0xff;
 }
 
-void mt76x2_get_power_info(struct mt76x2_dev *dev, struct mt76x2_tx_power_info *t)
+void mt76x2_get_power_info(struct mt76x2_dev *dev,
+			   struct mt76x2_tx_power_info *t)
 {
 	u16 bw40, bw80;
+
 	memset(t, 0, sizeof(*t));
 
 	bw40 = mt76x2_eeprom_get(dev, MT_EE_TX_POWER_DELTA_BW40);

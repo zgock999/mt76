@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -53,7 +53,6 @@ enum mt76x2_eeprom_field {
 	MT_EE_TX_POWER_0_GRP4_TSSI_SLOPE =	0x076,
 
 	MT_EE_TX_POWER_1_START_5G =		0x080,
-
 
 	MT_EE_TX_POWER_CCK =			0x0a0,
 	MT_EE_TX_POWER_OFDM_2G_6M =		0x0a2,
@@ -147,7 +146,8 @@ mt76x2_eeprom_get(struct mt76x2_dev *dev, enum mt76x2_eeprom_field field)
 }
 
 void mt76x2_get_rate_power(struct mt76x2_dev *dev, struct mt76_rate_power *t);
-void mt76x2_get_power_info(struct mt76x2_dev *dev, struct mt76x2_tx_power_info *t);
+void mt76x2_get_power_info(struct mt76x2_dev *dev,
+			   struct mt76x2_tx_power_info *t);
 int mt76x2_get_temp_comp(struct mt76x2_dev *dev, struct mt76x2_temp_comp *t);
 bool mt76x2_ext_pa_enabled(struct mt76x2_dev *dev, enum nl80211_band band);
 void mt76x2_read_rx_gain(struct mt76x2_dev *dev);
@@ -164,9 +164,8 @@ mt76x2_tssi_enabled(struct mt76x2_dev *dev)
 {
 	return !mt76x2_temp_tx_alc_enabled(dev) &&
 	       (mt76x2_eeprom_get(dev, MT_EE_NIC_CONF_1) &
-	        MT_EE_NIC_CONF_1_TX_ALC_EN);
+		MT_EE_NIC_CONF_1_TX_ALC_EN);
 }
-
 
 static inline bool
 mt76x2_has_ext_lna(struct mt76x2_dev *dev)

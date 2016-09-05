@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -26,7 +26,7 @@ mt7603_efuse_read(struct mt7603_dev *dev, u32 base, u16 addr, u8 *data)
 	val = mt76_rr(dev, base + MT_EFUSE_CTRL);
 	val &= ~(MT_EFUSE_CTRL_AIN |
 		 MT_EFUSE_CTRL_MODE);
-	val |= MT76_SET(MT_EFUSE_CTRL_AIN, addr & ~0xf);
+	val |= FIELD_PREP(MT_EFUSE_CTRL_AIN, addr & ~0xf);
 	val |= MT_EFUSE_CTRL_KICK;
 	mt76_wr(dev, base + MT_EFUSE_CTRL, val);
 

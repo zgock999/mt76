@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -158,7 +158,7 @@ void mt7603_beacon_set_timer(struct mt7603_dev *dev, int idx, int intval)
 
 	dev->beacon_int = intval;
 	mt76_wr(dev, MT_TBTT,
-		MT76_SET(MT_TBTT_PERIOD, intval) | MT_TBTT_CAL_ENABLE);
+		FIELD_PREP(MT_TBTT_PERIOD, intval) | MT_TBTT_CAL_ENABLE);
 
 	mt76_wr(dev, MT_TBTT_TIMER_CFG, 0x99); /* start timer */
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -64,7 +64,8 @@ struct dentry *mt76_register_debugfs(struct mt76_dev *dev)
 		return NULL;
 
 	debugfs_create_u32("regidx", S_IRUSR | S_IWUSR, dir, &dev->debugfs_reg);
-	debugfs_create_file("regval", S_IRUSR | S_IWUSR, dir, dev, &fops_regval);
+	debugfs_create_file("regval", S_IRUSR | S_IWUSR, dir, dev,
+			    &fops_regval);
 	debugfs_create_blob("eeprom", S_IRUSR, dir, &dev->eeprom);
 	if (dev->otp.data)
 		debugfs_create_blob("otp", S_IRUSR, dir, &dev->otp);

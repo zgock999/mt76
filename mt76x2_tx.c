@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -33,10 +33,12 @@ void mt76x2_tx(struct ieee80211_hw *hw, struct ieee80211_tx_control *control,
 
 	if (control->sta) {
 		struct mt76x2_sta *msta;
+
 		msta = (struct mt76x2_sta *) control->sta->drv_priv;
 		wcid = &msta->wcid;
 	} else if (vif) {
 		struct mt76x2_vif *mvif;
+
 		mvif = (struct mt76x2_vif *) vif->drv_priv;
 		wcid = &mvif->group_wcid;
 	}
@@ -58,7 +60,7 @@ void mt76x2_tx_complete(struct mt76x2_dev *dev, struct sk_buff *skb)
 	}
 }
 
-s8 mt76x3_tx_get_max_txpwr_adj(struct mt76x2_dev *dev,
+s8 mt76x2_tx_get_max_txpwr_adj(struct mt76x2_dev *dev,
 			       const struct ieee80211_tx_rate *rate)
 {
 	s8 max_txpwr;
@@ -124,6 +126,28 @@ void mt76x2_tx_set_txpwr_auto(struct mt76x2_dev *dev, s8 txpwr)
 		       MT_PROT_AUTO_TX_CFG_AUTO_PADJ, txpwr_adj);
 }
 
+static int mt76x2_insert_hdr_pad(struct sk_buff *skb)
+{
+	int len = ieee80211_get_hdrlen_from_skb(skb);
+	int ret;
+
+	if (len % 4 == 0)
+		return 0;
+
+	if (skb_headroom(skb) < 2) {
+		ret = pskb_expand_head(skb, 2, 0, GFP_ATOMIC);
+		if (ret != 0)
+			return ret;
+	}
+
+	skb_push(skb, 2);
+	memmove(skb->data, skb->data + 2, len);
+
+	skb->data[len] = 0;
+	skb->data[len + 1] = 0;
+	return 2;
+}
+
 int mt76x2_tx_prepare_skb(struct mt76_dev *mdev, void *txwi,
 			  struct sk_buff *skb, struct mt76_queue *q,
 			  struct mt76_wcid *wcid, struct ieee80211_sta *sta,
@@ -136,14 +160,14 @@ int mt76x2_tx_prepare_skb(struct mt76_dev *mdev, void *txwi,
 
 	mt76x2_mac_write_txwi(dev, txwi, skb, wcid, sta);
 
-	ret = mt76_insert_hdr_pad(skb);
+	ret = mt76x2_insert_hdr_pad(skb);
 	if (ret < 0)
 		return ret;
 
 	if (info->flags & IEEE80211_TX_CTL_RATE_CTRL_PROBE)
 		qsel = 0;
 
-	*tx_info = MT76_SET(MT_TXD_INFO_QSEL, qsel) |
+	*tx_info = FIELD_PREP(MT_TXD_INFO_QSEL, qsel) |
 		   MT_TXD_INFO_80211;
 
 	if (!wcid || wcid->hw_key_idx == 0xff)

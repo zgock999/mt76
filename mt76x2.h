@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Felix Fietkau <nbd@openwrt.org>
+ * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -180,10 +180,11 @@ void mt76x2_phy_calibrate(struct work_struct *work);
 void mt76x2_phy_set_txpower(struct mt76x2_dev *dev);
 
 int mt76x2_mcu_init(struct mt76x2_dev *dev);
-int mt76x2_mcu_set_channel(struct mt76x2_dev *dev, u8 channel, u8 bw, u8 bw_index,
-			 bool scan);
+int mt76x2_mcu_set_channel(struct mt76x2_dev *dev, u8 channel, u8 bw,
+			   u8 bw_index, bool scan);
 int mt76x2_mcu_set_radio_state(struct mt76x2_dev *dev, bool on);
-int mt76x2_mcu_load_cr(struct mt76x2_dev *dev, u8 type, u8 temp_level, u8 channel);
+int mt76x2_mcu_load_cr(struct mt76x2_dev *dev, u8 type, u8 temp_level,
+		       u8 channel);
 int mt76x2_mcu_cleanup(struct mt76x2_dev *dev);
 
 int mt76x2_dma_init(struct mt76x2_dev *dev);
@@ -194,7 +195,7 @@ void mt76x2_cleanup(struct mt76x2_dev *dev);
 int mt76x2_tx_queue_mcu(struct mt76x2_dev *dev, enum mt76_txq_id qid,
 			struct sk_buff *skb, int cmd, int seq);
 void mt76x2_tx(struct ieee80211_hw *hw, struct ieee80211_tx_control *control,
-	     struct sk_buff *skb);
+	       struct sk_buff *skb);
 void mt76x2_tx_complete(struct mt76x2_dev *dev, struct sk_buff *skb);
 int mt76x2_tx_prepare_skb(struct mt76_dev *dev, void *txwi_ptr,
 			  struct sk_buff *skb, struct mt76_queue *q,
@@ -211,7 +212,7 @@ void mt76x2_queue_rx_skb(struct mt76_dev *mdev, enum mt76_rxq_id q,
 
 void mt76x2_update_channel(struct mt76_dev *dev);
 
-s8 mt76x3_tx_get_max_txpwr_adj(struct mt76x2_dev *dev,
+s8 mt76x2_tx_get_max_txpwr_adj(struct mt76x2_dev *dev,
 			       const struct ieee80211_tx_rate *rate);
 s8 mt76x2_tx_get_txpwr_adj(struct mt76x2_dev *dev, s8 txpwr, s8 max_txpwr_adj);
 void mt76x2_tx_set_txpwr_auto(struct mt76x2_dev *dev, s8 txpwr);
