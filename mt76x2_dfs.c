@@ -38,27 +38,27 @@
 
 static const struct mt76x2_radar_specs etsi_radar_specs[] = {
 	/* 20MHz */
-	RADAR_SPEC(0, 8, 2, 9, 106, 150, 10, 4900, 100096, 10, 0,
+	RADAR_SPEC(0, 8, 2, 15, 106, 150, 10, 4900, 100096, 10, 0,
 		   0x7fffffff, 0x155cc0, 0x19cc),
-	RADAR_SPEC(0, 40, 4, 44, 96, 380, 150, 4900, 100096, 40, 0,
+	RADAR_SPEC(0, 40, 4, 59, 96, 380, 150, 4900, 100096, 40, 0,
 		   0x7fffffff, 0x155cc0, 0x19cc),
 	RADAR_SPEC(3, 60, 20, 46, 300, 640, 80, 4900, 10100, 80, 0,
 		   0x7fffffff, 0x155cc0, 0x19dd),
 	RADAR_SPEC(8, 8, 2, 9, 106, 150, 32, 4900, 296704, 32, 0,
 		   0x7fffffff, 0x2191c0, 0x15cc),
 	/* 40MHz */
-	RADAR_SPEC(0, 8, 2, 9, 106, 150, 10, 4900, 100096, 10, 0,
+	RADAR_SPEC(0, 8, 2, 15, 106, 150, 10, 4900, 100096, 10, 0,
 		   0x7fffffff, 0x155cc0, 0x19cc),
-	RADAR_SPEC(0, 40, 4, 44, 96, 380, 150, 4900, 100096, 40, 0,
+	RADAR_SPEC(0, 40, 4, 59, 96, 380, 150, 4900, 100096, 40, 0,
 		   0x7fffffff, 0x155cc0, 0x19cc),
 	RADAR_SPEC(3, 60, 20, 46, 300, 640, 80, 4900, 10100, 80, 0,
 		   0x7fffffff, 0x155cc0, 0x19dd),
 	RADAR_SPEC(8, 8, 2, 9, 106, 150, 32, 4900, 296704, 32, 0,
 		   0x7fffffff, 0x2191c0, 0x15cc),
 	/* 80MHz */
-	RADAR_SPEC(0, 8, 2, 9, 106, 150, 10, 4900, 100096, 10, 0,
+	RADAR_SPEC(0, 8, 2, 15, 106, 150, 10, 4900, 100096, 10, 0,
 		   0x7fffffff, 0x155cc0, 0x19cc),
-	RADAR_SPEC(0, 40, 4, 44, 96, 380, 150, 4900, 100096, 40, 0,
+	RADAR_SPEC(0, 40, 4, 59, 96, 380, 150, 4900, 100096, 40, 0,
 		   0x7fffffff, 0x155cc0, 0x19cc),
 	RADAR_SPEC(3, 60, 20, 46, 300, 640, 80, 4900, 10100, 80, 0,
 		   0x7fffffff, 0x155cc0, 0x19dd),
@@ -68,31 +68,31 @@ static const struct mt76x2_radar_specs etsi_radar_specs[] = {
 
 static const struct mt76x2_radar_specs fcc_radar_specs[] = {
 	/* 20MHz */
-	RADAR_SPEC(0, 8, 2, 7, 106, 150, 5, 2900, 80100, 5, 0,
+	RADAR_SPEC(0, 8, 2, 12, 106, 150, 5, 2900, 80100, 5, 0,
 		   0x7fffffff, 0xfe808, 0x13dc),
 	RADAR_SPEC(0, 8, 2, 7, 106, 140, 5, 27600, 27900, 5, 0,
 		   0x7fffffff, 0xfe808, 0x19dd),
-	RADAR_SPEC(0, 40, 4, 44, 96, 480, 150, 2900, 80100, 40, 0,
+	RADAR_SPEC(0, 40, 4, 54, 96, 480, 150, 2900, 80100, 40, 0,
 		   0x7fffffff, 0xfe808, 0x12cc),
-	RADAR_SPEC(2, 60, 15, 48, 640, 2080, 32, 19600, 40200, 32, 0,
+	RADAR_SPEC(2, 60, 15, 63, 640, 2080, 32, 19600, 40200, 32, 0,
 		   0x3938700, 0x57bcf00, 0x1289),
 	/* 40MHz */
-	RADAR_SPEC(0, 8, 2, 7, 106, 150, 5, 2900, 80100, 5, 0,
+	RADAR_SPEC(0, 8, 2, 12, 106, 150, 5, 2900, 80100, 5, 0,
 		   0x7fffffff, 0xfe808, 0x13dc),
 	RADAR_SPEC(0, 8, 2, 7, 106, 140, 5, 27600, 27900, 5, 0,
 		   0x7fffffff, 0xfe808, 0x19dd),
-	RADAR_SPEC(0, 40, 4, 44, 96, 480, 150, 2900, 80100, 40, 0,
+	RADAR_SPEC(0, 40, 4, 54, 96, 480, 150, 2900, 80100, 40, 0,
 		   0x7fffffff, 0xfe808, 0x12cc),
-	RADAR_SPEC(2, 60, 15, 48, 640, 2080, 32, 19600, 40200, 32, 0,
+	RADAR_SPEC(2, 60, 15, 63, 640, 2080, 32, 19600, 40200, 32, 0,
 		   0x3938700, 0x57bcf00, 0x1289),
 	/* 80MHz */
-	RADAR_SPEC(0, 8, 2, 9, 106, 150, 15, 2900, 80100, 15, 0,
+	RADAR_SPEC(0, 8, 2, 14, 106, 150, 15, 2900, 80100, 15, 0,
 		   0x7fffffff, 0xfe808, 0x16cc),
 	RADAR_SPEC(0, 8, 2, 7, 106, 140, 5, 27600, 27900, 5, 0,
 		   0x7fffffff, 0xfe808, 0x19dd),
-	RADAR_SPEC(0, 40, 4, 44, 96, 480, 150, 2900, 80100, 40, 0,
+	RADAR_SPEC(0, 40, 4, 54, 96, 480, 150, 2900, 80100, 40, 0,
 		   0x7fffffff, 0xfe808, 0x12cc),
-	RADAR_SPEC(2, 60, 15, 48, 640, 2080, 32, 19600, 40200, 32, 0,
+	RADAR_SPEC(2, 60, 15, 63, 640, 2080, 32, 19600, 40200, 32, 0,
 		   0x3938700, 0x57bcf00, 0x1289)
 };
 
@@ -230,7 +230,7 @@ static bool mt76x2_dfs_check_hw_pulse(struct mt76x2_dev *dev,
 			ret = (pulse->period >= 2900 &&
 			       pulse->period <= 61600);
 		else
-			ret = (pulse->period >= 3900 &&
+			ret = (pulse->period >= 3500 &&
 			       pulse->period <= 10100);
 		break;
 	case NL80211_DFS_ETSI:
@@ -295,32 +295,6 @@ static bool mt76x2_dfs_check_hw_pulse(struct mt76x2_dev *dev,
 	return ret;
 }
 
-static void mt76x2_dfs_chan_state(struct mt76x2_dev *dev)
-{
-	u64 ch_active_time, ch_busy_time;
-	u32 ch_active_delta, ch_busy_delta;
-	struct mt76_channel_state *state;
-	struct cfg80211_chan_def *chandef = &dev->mt76.chandef;
-	struct mt76x2_dfs_pattern_detector *dfs_pd = &dev->dfs_pd;
-
-	mt76x2_update_channel(&dev->mt76);
-	state = mt76_channel_state(&dev->mt76, chandef->chan);
-
-	spin_lock_bh(&dev->mt76.cc_lock);
-	ch_active_time = state->cc_active;
-	ch_busy_time = state->cc_busy;
-	spin_unlock_bh(&dev->mt76.cc_lock);
-
-	ch_active_delta = ch_active_time - dfs_pd->ch_active_time;
-	ch_busy_delta = ch_busy_time - dfs_pd->ch_busy_time;
-
-	dfs_pd->ch_busy = (MT_DFS_FRAC(ch_busy_delta, ch_active_delta) >
-			   MT_DFS_FRAC(80, 100));
-
-	dfs_pd->ch_active_time = ch_active_time;
-	dfs_pd->ch_busy_time = ch_busy_time;
-}
-
 void mt76x2_dfs_tasklet(unsigned long arg)
 {
 	struct mt76x2_dev *dev = (struct mt76x2_dev *)arg;
@@ -329,14 +303,6 @@ void mt76x2_dfs_tasklet(unsigned long arg)
 	int i;
 
 	if (test_bit(MT76_SCANNING, &dev->mt76.state))
-		goto out;
-
-	if (++dfs_pd->ch_state_cnt > MT_DFS_CH_STATE_INTERVAL) {
-		dfs_pd->ch_state_cnt = 0;
-		mt76x2_dfs_chan_state(dev);
-	}
-
-	if (dfs_pd->ch_busy)
 		goto out;
 
 	engine_mask = mt76_rr(dev, MT_BBP(DFS, 1));
