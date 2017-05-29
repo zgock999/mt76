@@ -26,10 +26,9 @@ mt7603_start(struct ieee80211_hw *hw)
 {
 	struct mt7603_dev *dev = hw->priv;
 
-	mt7603_mac_start(dev);
-	mt7603_mac_watchdog_reset(dev);
 	ieee80211_queue_delayed_work(mt76_hw(dev), &dev->mac_work,
 				     MT7603_WATCHDOG_TIME);
+	mt7603_mac_start(dev);
 	set_bit(MT76_STATE_RUNNING, &dev->mt76.state);
 
 	return 0;
@@ -42,6 +41,7 @@ mt7603_stop(struct ieee80211_hw *hw)
 
 	clear_bit(MT76_STATE_RUNNING, &dev->mt76.state);
 	cancel_delayed_work_sync(&dev->mac_work);
+	mt7603_mac_watchdog_reset(dev);
 	mt7603_mac_stop(dev);
 }
 
@@ -272,9 +272,9 @@ mt7603_sta_add(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 		mt7603_txq_init(dev, sta->txq[i]);
 
 	msta->wcid.idx = idx;
+	mt7603_wtbl_init(dev, idx, sta->addr);
 	mt7603_wtbl_update_cap(dev, sta);
 
-	mt7603_wtbl_init(dev, idx, sta->addr);
 	rcu_assign_pointer(dev->wcid[idx], &msta->wcid);
 
 out:
@@ -335,6 +335,17 @@ mt7603_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 	struct mt7603_sta *msta = sta ? (struct mt7603_sta *) sta->drv_priv : NULL;
 	struct mt76_wcid *wcid = msta ? &msta->wcid : &mvif->sta.wcid;
 	int idx = key->keyidx;
+
+	/*
+	 * The hardware does not support per-STA RX GTK, fall back
+	 * to software mode for these.
+	 */
+	if ((vif->type == NL80211_IFTYPE_ADHOC ||
+	     vif->type == NL80211_IFTYPE_MESH_POINT) &&
+	    (key->cipher == WLAN_CIPHER_SUITE_TKIP ||
+	     key->cipher == WLAN_CIPHER_SUITE_CCMP) &&
+	    !(key->flags & IEEE80211_KEY_FLAG_PAIRWISE))
+		return -EOPNOTSUPP;
 
 	if (cmd == SET_KEY) {
 		key->hw_key_idx = wcid->idx;
@@ -400,6 +411,7 @@ mt7603_sw_scan(struct ieee80211_hw *hw, struct ieee80211_vif *vif, const u8 *mac
 	struct mt7603_dev *dev = hw->priv;
 
 	set_bit(MT76_SCANNING, &dev->mt76.state);
+	mt7603_beacon_set_timer(dev, -1, 0);
 }
 
 static void
@@ -408,6 +420,7 @@ mt7603_sw_scan_complete(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 	struct mt7603_dev *dev = hw->priv;
 
 	clear_bit(MT76_SCANNING, &dev->mt76.state);
+	mt7603_beacon_set_timer(dev, -1, dev->beacon_int);
 	mt76_txq_schedule_all(&dev->mt76);
 }
 

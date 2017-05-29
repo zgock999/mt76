@@ -75,7 +75,7 @@ mt7603_dma_sched_init(struct mt7603_dev *dev)
 
 	page_count = mt76_get_field(dev, MT_PSE_FC_P0,
 				    MT_PSE_FC_P0_MAX_QUOTA);
-	beacon_pages = max_beacon_len / page_size;
+	beacon_pages = 4 * (max_beacon_len / page_size);
 	mcu_pages = max_mcu_len / page_size;
 
 	mt76_wr(dev, MT_PSE_FRP,
@@ -211,12 +211,17 @@ mt7603_mac_init(struct mt7603_dev *dev)
 	/* Configure all rx packets to HIF */
 	mt76_wr(dev, MT_DMA_RCFR0, 0xc0000000);
 
-	/* Configure txs selection with aggregation */
+	/* Configure MCU txs selection with aggregation */
+	mt76_wr(dev, MT_DMA_TCFR0,
+		FIELD_PREP(MT_DMA_TCFR_TXS_AGGR_TIMEOUT, 1) | /* 32 us */
+		MT_DMA_TCFR_TXS_AGGR_COUNT);
+
+	/* Configure HIF txs selection with aggregation */
 	mt76_wr(dev, MT_DMA_TCFR1,
-		FIELD_PREP(MT_DMA_TCFR1_TXS_AGGR_TIMEOUT, 1) | /* 32 us */
-		MT_DMA_TCFR1_TXS_AGGR_COUNT | /* Maximum count */
-		MT_DMA_TCFR1_TXS_QUEUE | /* Queue 1 */
-		MT_DMA_TCFR1_TXS_BIT_MAP);
+		FIELD_PREP(MT_DMA_TCFR_TXS_AGGR_TIMEOUT, 1) | /* 32 us */
+		MT_DMA_TCFR_TXS_AGGR_COUNT | /* Maximum count */
+		MT_DMA_TCFR_TXS_QUEUE | /* Queue 1 */
+		MT_DMA_TCFR_TXS_BIT_MAP);
 
 	mt76_wr(dev, MT_MCU_PCIE_REMAP_1, MT_PSE_WTBL_2_PHYS_ADDR);
 
@@ -249,6 +254,11 @@ mt7603_mac_init(struct mt7603_dev *dev)
 	mt76_set(dev, MT_WTBL_RMVTCR, MT_WTBL_RMVTCR_RX_MV_MODE);
 
 	mt76_clear(dev, MT_SEC_SCR, MT_SEC_SCR_MASK_ORDER);
+
+	/* Set secondary beacon time offsets */
+	for (i = 0; i <= 4; i++)
+		mt76_rmw_field(dev, MT_LPON_SBTOR(i), MT_LPON_SBTOR_TIME_OFFSET,
+			       (i + 1) * (20 + 4096));
 }
 
 static int
@@ -262,7 +272,6 @@ mt7603_init_hardware(struct mt7603_dev *dev)
 	if (ret < 0)
 		return ret;
 
-	mt7603_mac_reset(dev);
 	ret = mt7603_dma_init(dev);
 	if (ret)
 		return ret;
