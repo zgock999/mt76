@@ -72,6 +72,7 @@ struct mt7603_sta {
 	struct ieee80211_tx_rate rates[8];
 	int rate_count;
 	int n_rates;
+	bool rate_probe;
 
 	int pid;
 
@@ -235,10 +236,12 @@ int mt7603_mcu_set_timing(struct mt7603_dev *dev, int slot, int sifs, int rifs,
 			  int eifs);
 void mt7603_mcu_exit(struct mt7603_dev *dev);
 
-void mt7603_wtbl_init(struct mt7603_dev *dev, int idx, const u8 *addr);
+void mt7603_wtbl_init(struct mt7603_dev *dev, int idx, int vif, const u8 *addr);
 void mt7603_wtbl_clear(struct mt7603_dev *dev, int idx);
 void mt7603_wtbl_update_cap(struct mt7603_dev *dev, struct ieee80211_sta *sta);
-void mt7603_wtbl_set_rates(struct mt7603_dev *dev, struct mt7603_sta *sta);
+void mt7603_wtbl_set_rates(struct mt7603_dev *dev, struct mt7603_sta *sta,
+			   struct ieee80211_tx_rate *probe_rate,
+			   struct ieee80211_tx_rate *rates);
 int mt7603_wtbl_set_key(struct mt7603_dev *dev, int wcid,
 			struct ieee80211_key_conf *key);
 void mt7603_wtbl_set_ps(struct mt7603_dev *dev, int idx, bool val);
