@@ -1129,6 +1129,7 @@ void mt7603_mac_watchdog_reset(struct mt7603_dev *dev)
 	u32 mask = dev->irqmask;
 	int i;
 
+	ieee80211_stop_queues(dev->mt76.hw);
 	set_bit(MT76_RESET, &dev->mt76.state);
 
 	tasklet_disable(&dev->tx_tasklet);
@@ -1167,6 +1168,7 @@ void mt7603_mac_watchdog_reset(struct mt7603_dev *dev)
 	tasklet_enable(&dev->pre_tbtt_tasklet);
 	napi_enable(&dev->mt76.napi[0]);
 	napi_enable(&dev->mt76.napi[1]);
+	ieee80211_wake_queues(dev->mt76.hw);
 }
 
 static bool mt7603_rx_dma_busy(struct mt7603_dev *dev)
@@ -1256,7 +1258,6 @@ void mt7603_mac_work(struct work_struct *work)
 {
 	struct mt7603_dev *dev = container_of(work, struct mt7603_dev, mac_work.work);
 	struct sk_buff *skb;
-	int time = MT7603_WATCHDOG_TIME;
 	bool reset = false;
 
 	spin_lock_bh(&dev->status_lock);
@@ -1304,6 +1305,5 @@ void mt7603_mac_work(struct work_struct *work)
 		mt7603_mac_watchdog_reset(dev);
 
 	ieee80211_queue_delayed_work(mt76_hw(dev), &dev->mac_work,
-				     msecs_to_jiffies(time));
-	return;
+				     msecs_to_jiffies(MT7603_WATCHDOG_TIME));
 }
