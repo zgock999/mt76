@@ -44,6 +44,12 @@
 #include "mt76x2_mac.h"
 #include "mt76x2_dfs.h"
 
+enum mt76x2_antenna {
+	MT76x2_ANTENNA_DEF,
+	MT76x2_ANTENNA_0,
+	MT76x2_ANTENNA_1,
+};
+
 struct mt76x2_mcu {
 	struct mutex mutex;
 
@@ -120,6 +126,7 @@ struct mt76x2_dev {
 	u32 rev;
 	u32 rxfilter;
 
+	enum mt76x2_antenna ant_mode;
 	u16 chainmask;
 
 	struct mt76x2_calibration cal;
@@ -179,6 +186,7 @@ int mt76x2_eeprom_init(struct mt76x2_dev *dev);
 int mt76x2_apply_calibration_data(struct mt76x2_dev *dev, int channel);
 void mt76x2_set_tx_ackto(struct mt76x2_dev *dev);
 
+void mt76x2_phy_set_antenna(struct mt76x2_dev *dev);
 int mt76x2_phy_start(struct mt76x2_dev *dev);
 int mt76x2_phy_set_channel(struct mt76x2_dev *dev,
 			 struct cfg80211_chan_def *chandef);

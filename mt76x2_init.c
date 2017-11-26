@@ -805,6 +805,9 @@ int mt76x2_register_device(struct mt76x2_dev *dev)
 	wiphy->iface_combinations = if_comb;
 	wiphy->n_iface_combinations = ARRAY_SIZE(if_comb);
 
+	wiphy->available_antennas_tx = 0x3;
+	wiphy->available_antennas_rx = 0x3;
+
 	wiphy->reg_notifier = mt76x2_regd_notifier;
 
 	wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_VHT_IBSS);

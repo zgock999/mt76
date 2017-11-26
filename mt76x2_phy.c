@@ -373,27 +373,59 @@ mt76x2_phy_set_band(struct mt76x2_dev *dev, int band, bool primary_upper)
 		       primary_upper);
 }
 
-static void
-mt76x2_set_rx_chains(struct mt76x2_dev *dev)
+void mt76x2_phy_set_antenna(struct mt76x2_dev *dev)
 {
 	u32 val;
 
-	val = mt76_rr(dev, MT_BBP(AGC, 0));
-	val &= ~(BIT(3) | BIT(4));
-
-	if (dev->chainmask & BIT(1))
-		val |= BIT(3);
-
-	mt76_wr(dev, MT_BBP(AGC, 0), val);
-}
-
-static void
-mt76x2_set_tx_dac(struct mt76x2_dev *dev)
-{
-	if (dev->chainmask & BIT(1))
-		mt76_set(dev, MT_BBP(TXBE, 5), 3);
-	else
+	/* tx path */
+	switch (dev->ant_mode) {
+	case MT76x2_ANTENNA_0:
+		/* disable mac DAC control */
+		mt76_clear(dev, MT_BBP(IBI, 9), BIT(11));
 		mt76_clear(dev, MT_BBP(TXBE, 5), 3);
+		mt76_rmw_field(dev, MT_TX_PIN_CFG, MT_TX_PIN_CFG_TXANT, 0x3);
+		mt76_rmw_field(dev, MT_BBP(CORE, 32), GENMASK(21, 20), 2);
+		/* disable DAC 1 */
+		mt76_rmw_field(dev, MT_BBP(CORE, 33), GENMASK(12, 9), 4);
+		break;
+	case MT76x2_ANTENNA_1:
+		/* disable mac DAC control */
+		mt76_clear(dev, MT_BBP(IBI, 9), BIT(11));
+		mt76_rmw_field(dev, MT_BBP(TXBE, 5), 3, 1);
+		mt76_rmw_field(dev, MT_TX_PIN_CFG, MT_TX_PIN_CFG_TXANT, 0xc);
+		mt76_rmw_field(dev, MT_BBP(CORE, 32), GENMASK(21, 20), 1);
+		/* disable DAC 0 */
+		mt76_rmw_field(dev, MT_BBP(CORE, 33), GENMASK(12, 9), 1);
+		break;
+	case MT76x2_ANTENNA_DEF:
+	default:
+		mt76_set(dev, MT_BBP(TXBE, 5), 3);
+		mt76_rmw_field(dev, MT_TX_PIN_CFG, MT_TX_PIN_CFG_TXANT, 0xf);
+		mt76_clear(dev, MT_BBP(CORE, 32), GENMASK(21, 20));
+		mt76_clear(dev, MT_BBP(CORE, 33), GENMASK(12, 9));
+		/* enable mac DAC control */
+		mt76_set(dev, MT_BBP(IBI, 9), BIT(11));
+		break;
+	}
+
+	/* rx path */
+	val = mt76_rr(dev, MT_BBP(AGC, 0));
+
+	switch (dev->ant_mode) {
+	case MT76x2_ANTENNA_0:
+		val &= ~(BIT(4) | BIT(3) | BIT(1) | BIT(0));
+		break;
+	case MT76x2_ANTENNA_1:
+		val &= ~(BIT(4) | BIT(3) | BIT(1));
+		val |= BIT(0);
+		break;
+	case MT76x2_ANTENNA_DEF:
+	default:
+		val &= ~(BIT(4) | BIT(1) | BIT(0));
+		val |= BIT(3) ;
+		break;
+	}
+	mt76_wr(dev, MT_BBP(AGC, 0), val);
 }
 
 static void
@@ -598,10 +630,8 @@ int mt76x2_phy_set_channel(struct mt76x2_dev *dev,
 	mt76x2_configure_tx_delay(dev, band, bw);
 	mt76x2_phy_set_txpower(dev);
 
-	mt76x2_set_rx_chains(dev);
 	mt76x2_phy_set_band(dev, chan->band, ch_group_index & 1);
 	mt76x2_phy_set_bw(dev, chandef->width, ch_group_index);
-	mt76x2_set_tx_dac(dev);
 
 	mt76_rmw(dev, MT_EXT_CCA_CFG,
 		 (MT_EXT_CCA_CFG_CCA0 |
@@ -621,6 +651,8 @@ int mt76x2_phy_set_channel(struct mt76x2_dev *dev,
 		return ret;
 
 	mt76x2_mcu_init_gain(dev, channel, dev->cal.rx.mcu_gain, true);
+
+	mt76x2_phy_set_antenna(dev);
 
 	/* Enable LDPC Rx */
 	if (mt76xx_rev(dev) >= MT76XX_REV_E3)
