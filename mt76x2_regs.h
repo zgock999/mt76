@@ -438,6 +438,14 @@
 
 #define MT_TX_SW_CFG3			0x1478
 
+#define MT_MAC_ADDR_EXT_EN		0x147c
+#define MT_MAC_ADDR_EXT_EN_MASK		BIT(0)
+
+#define MT_MAC_ADDR_EXT_BASE		0x1480
+#define MT_MAC_ADDR_EXT_L(_n)		(MT_MAC_ADDR_EXT_BASE + ((_n) * 8))
+#define MT_MAC_ADDR_EXT_H(_n)		(MT_MAC_ADDR_EXT_BASE + ((_n) * 8 + 4))
+#define MT_MAC_ADDR_EXT_H_MASK		GENMASK(15, 0)
+
 #define MT_PN_PAD_MODE			0x150c
 
 #define MT_TXOP_HLDR_ET			0x1608

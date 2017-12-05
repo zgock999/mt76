@@ -279,6 +279,9 @@ int mt76x2_mac_reset(struct mt76x2_dev *dev, bool hard)
 		FIELD_PREP(MT_MAC_BSSID_DW1_MBSS_MODE, 3) | /* 8 beacons */
 		MT_MAC_BSSID_DW1_MBSS_LOCAL_BIT);
 
+	/* enable ext mac support by default */
+	mt76_rmw_field(dev, MT_MAC_ADDR_EXT_EN, MT_MAC_ADDR_EXT_EN_MASK, 1);
+
 	/* Fire a pre-TBTT interrupt 8 ms before TBTT */
 	mt76_rmw_field(dev, MT_INT_TIMER_CFG, MT_INT_TIMER_CFG_PRE_TBTT,
 		       8 << 4);
