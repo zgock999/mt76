@@ -20,14 +20,6 @@
 #include "mt76x2_eeprom.h"
 #include "mt76x2_trace.h"
 
-void mt76x2_mac_set_bssid(struct mt76x2_dev *dev, u8 idx, const u8 *addr)
-{
-	idx &= 7;
-	mt76_wr(dev, MT_MAC_APC_BSSID_L(idx), get_unaligned_le32(addr));
-	mt76_rmw_field(dev, MT_MAC_APC_BSSID_H(idx), MT_MAC_APC_BSSID_H_ADDR,
-		       get_unaligned_le16(addr + 4));
-}
-
 void mt76x2_mac_set_ext_mac(struct mt76x2_dev *dev, u8 idx, const u8 *addr)
 {
 	idx &= 15;

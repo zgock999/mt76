@@ -230,7 +230,6 @@ mt76x2_init_beacon_offsets(struct mt76x2_dev *dev)
 
 int mt76x2_mac_reset(struct mt76x2_dev *dev, bool hard)
 {
-	static const u8 null_addr[ETH_ALEN] = {};
 	const u8 *macaddr = dev->mt76.macaddr;
 	u32 val;
 	int i, k;
@@ -303,10 +302,8 @@ int mt76x2_mac_reset(struct mt76x2_dev *dev, bool hard)
 		for (k = 0; k < 4; k++)
 			mt76x2_mac_shared_key_setup(dev, i, k, NULL);
 
-	for (i = 0; i < 8; i++) {
-		mt76x2_mac_set_bssid(dev, i, null_addr);
+	for (i = 0; i < 8; i++)
 		mt76x2_mac_set_beacon(dev, i, NULL);
-	}
 
 	for (i = 0; i < 16; i++)
 		mt76_rr(dev, MT_TX_STAT_FIFO);
