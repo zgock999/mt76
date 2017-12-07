@@ -295,7 +295,7 @@ static bool mt76x2_dfs_check_hw_pulse(struct mt76x2_dev *dev,
 	return ret;
 }
 
-void mt76x2_dfs_tasklet(unsigned long arg)
+static void mt76x2_dfs_tasklet(unsigned long arg)
 {
 	struct mt76x2_dev *dev = (struct mt76x2_dev *)arg;
 	struct mt76x2_dfs_pattern_detector *dfs_pd = &dev->dfs_pd;
@@ -447,7 +447,7 @@ void mt76x2_dfs_adjust_agc(struct mt76x2_dev *dev)
 	val_r4 += (((val_r8 + 1) >> 1) << 24);
 	mt76_wr(dev, MT_BBP(AGC, 4), val_r4);
 
-	dfs_r31 = FIELD_GET(MT_BBP_AGC_LNA_GAIN, val_r4);
+	dfs_r31 = FIELD_GET(MT_BBP_AGC_LNA_HIGH_GAIN, val_r4);
 	dfs_r31 += val_r8;
 	dfs_r31 -= (agc_r8 & 0x00000038) >> 3;
 	dfs_r31 = (dfs_r31 << 16) | 0x00000307;

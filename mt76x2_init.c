@@ -290,6 +290,9 @@ int mt76x2_mac_reset(struct mt76x2_dev *dev, bool hard)
 	if (!hard)
 		return 0;
 
+	for (i = 0; i < 256 / 32; i++)
+		mt76_wr(dev, MT_WCID_DROP_BASE + i * 4, 0);
+
 	for (i = 0; i < 256; i++)
 		mt76x2_mac_wcid_setup(dev, i, 0, NULL);
 
@@ -709,6 +712,85 @@ static const struct ieee80211_iface_combination if_comb[] = {
 	}
 };
 
+static void mt76x2_led_set_config(struct mt76_dev *mt76, u8 delay_on,
+				  u8 delay_off)
+{
+	struct mt76x2_dev *dev = container_of(mt76, struct mt76x2_dev,
+					      mt76);
+	u32 val;
+
+	val = MT_LED_STATUS_DURATION(0xff) |
+	      MT_LED_STATUS_OFF(delay_off) |
+	      MT_LED_STATUS_ON(delay_on);
+
+	mt76_wr(dev, MT_LED_S0(mt76->led_pin), val);
+	mt76_wr(dev, MT_LED_S1(mt76->led_pin), val);
+
+	val = MT_LED_CTRL_REPLAY(mt76->led_pin) |
+	      MT_LED_CTRL_KICK(mt76->led_pin);
+	if (mt76->led_al)
+		val |= MT_LED_CTRL_POLARITY(mt76->led_pin);
+	mt76_wr(dev, MT_LED_CTRL, val);
+}
+
+static int mt76x2_led_set_blink(struct led_classdev *led_cdev,
+				unsigned long *delay_on,
+				unsigned long *delay_off)
+{
+	struct mt76_dev *mt76 = container_of(led_cdev, struct mt76_dev,
+					     led_cdev);
+	u8 delta_on, delta_off;
+
+	delta_off = max_t(u8, *delay_off / 10, 1);
+	delta_on = max_t(u8, *delay_on / 10, 1);
+
+	mt76x2_led_set_config(mt76, delta_on, delta_off);
+	return 0;
+}
+
+static void mt76x2_led_set_brightness(struct led_classdev *led_cdev,
+				      enum led_brightness brightness)
+{
+	struct mt76_dev *mt76 = container_of(led_cdev, struct mt76_dev,
+					     led_cdev);
+
+	if (!brightness)
+		mt76x2_led_set_config(mt76, 0, 0xff);
+	else
+		mt76x2_led_set_config(mt76, 0xff, 0);
+}
+
+static void
+mt76x2_init_txpower(struct mt76x2_dev *dev,
+		    struct ieee80211_supported_band *sband)
+{
+	struct ieee80211_channel *chan;
+	struct mt76x2_tx_power_info txp;
+	struct mt76_rate_power t = {};
+	int target_power;
+	int i;
+
+	for (i = 0; i < sband->n_channels; i++) {
+		chan = &sband->channels[i];
+
+		mt76x2_get_power_info(dev, &txp, chan);
+
+		target_power = max_t(int, (txp.chain[0].target_power +
+					   txp.chain[0].delta),
+					  (txp.chain[1].target_power +
+					   txp.chain[1].delta));
+
+		mt76x2_get_rate_power(dev, &t, chan);
+
+		chan->max_power = mt76x2_get_max_rate_power(&t) +
+				  target_power;
+		chan->max_power /= 2;
+
+		/* convert to combined output power on 2x2 devices */
+		chan->max_power += 3;
+	}
+}
+
 int mt76x2_register_device(struct mt76x2_dev *dev)
 {
 	struct ieee80211_hw *hw = mt76_hw(dev);
@@ -767,12 +849,18 @@ int mt76x2_register_device(struct mt76x2_dev *dev)
 
 	mt76x2_dfs_init_detector(dev);
 
+	/* init led callbacks */
+	dev->mt76.led_cdev.brightness_set = mt76x2_led_set_brightness;
+	dev->mt76.led_cdev.blink_set = mt76x2_led_set_blink;
+
 	ret = mt76_register_device(&dev->mt76, true, mt76x2_rates,
 				   ARRAY_SIZE(mt76x2_rates));
 	if (ret)
 		goto fail;
 
 	mt76x2_init_debugfs(dev);
+	mt76x2_init_txpower(dev, &dev->mt76.sband_2g.sband);
+	mt76x2_init_txpower(dev, &dev->mt76.sband_5g.sband);
 
 	return 0;
 

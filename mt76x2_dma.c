@@ -25,7 +25,6 @@ mt76x2_tx_queue_mcu(struct mt76x2_dev *dev, enum mt76_txq_id qid,
 	struct mt76_queue_buf buf;
 	dma_addr_t addr;
 	u32 tx_info;
-	int idx;
 
 	tx_info = MT_MCU_MSG_TYPE_CMD |
 		  FIELD_PREP(MT_MCU_MSG_CMD_TYPE, cmd) |
@@ -41,7 +40,7 @@ mt76x2_tx_queue_mcu(struct mt76x2_dev *dev, enum mt76_txq_id qid,
 	buf.addr = addr;
 	buf.len = skb->len;
 	spin_lock_bh(&q->lock);
-	idx = mt76_queue_add_buf(dev, q, &buf, 1, tx_info, skb, NULL);
+	mt76_queue_add_buf(dev, q, &buf, 1, tx_info, skb, NULL);
 	mt76_queue_kick(dev, q);
 	spin_unlock_bh(&q->lock);
 
@@ -170,7 +169,7 @@ int mt76x2_dma_init(struct mt76x2_dev *dev)
 
 	q = &dev->mt76.q_rx[MT_RXQ_MAIN];
 	q->buf_offset = MT_RX_HEADROOM - sizeof(struct mt76x2_rxwi);
-	ret = mt76x2_init_rx_queue(dev, q, 0, MT_RX_RING_SIZE, MT_RX_BUF_SIZE);
+	ret = mt76x2_init_rx_queue(dev, q, 0, MT76x2_RX_RING_SIZE, MT_RX_BUF_SIZE);
 	if (ret)
 		return ret;
 

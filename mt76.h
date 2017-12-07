@@ -21,10 +21,10 @@
 #include <linux/io.h>
 #include <linux/spinlock.h>
 #include <linux/skbuff.h>
+#include <linux/leds.h>
 #include <net/mac80211.h>
 #include "util.h"
 
-#define MT_RX_RING_SIZE     128
 #define MT_TX_RING_SIZE     256
 #define MT_MCU_RING_SIZE    32
 #define MT_RX_BUF_SIZE      2048
@@ -129,6 +129,7 @@ struct mt76_wcid {
 	bool tx_rate_set;
 	u8 tx_rate_nss;
 	s8 max_txpwr_adj;
+	bool sw_iv;
 };
 
 struct mt76_txq {
@@ -222,6 +223,11 @@ struct mt76_dev {
 	struct mt76_hw_cap cap;
 
 	u32 debugfs_reg;
+
+	struct led_classdev led_cdev;
+	char led_name[32];
+	bool led_al;
+	u8 led_pin;
 };
 
 enum mt76_phy_type {

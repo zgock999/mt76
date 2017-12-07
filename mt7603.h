@@ -17,6 +17,7 @@
 #ifndef __MT7603_H
 #define __MT7603_H
 
+#include <linux/interrupt.h>
 #include "mt76.h"
 #include "mt7603_regs.h"
 
@@ -26,6 +27,8 @@
 #define MT7603_WTBL_STA		(MT7603_WTBL_RESERVED - MT7603_MAX_INTERFACES)
 
 #define MT7603_RATE_RETRY	2
+
+#define MT7603_RX_RING_SIZE     128
 
 #define MT7603_FIRMWARE_E1	"mt7603_e1.bin"
 #define MT7603_FIRMWARE_E2	"mt7603_e2.bin"
@@ -213,7 +216,6 @@ static inline void mt7603_irq_disable(struct mt7603_dev *dev, u32 mask)
 	mt7603_set_irq_mask(dev, mask, 0);
 }
 
-void mt7603_mac_reset(struct mt7603_dev *dev);
 void mt7603_mac_dma_start(struct mt7603_dev *dev);
 void mt7603_mac_start(struct mt7603_dev *dev);
 void mt7603_mac_stop(struct mt7603_dev *dev);
@@ -227,16 +229,14 @@ struct sk_buff *mt7603_mac_status_skb(struct mt7603_dev *dev,
 void mt7603_mac_rx_ba_reset(struct mt7603_dev *dev, void *addr, u8 tid);
 void mt7603_mac_tx_ba_reset(struct mt7603_dev *dev, int wcid, int tid, int ssn,
 			    int ba_size);
-void mt7603_mac_watchdog_reset(struct mt7603_dev *dev);
 
 int mt7603_mcu_set_channel(struct mt7603_dev *dev);
-int mt7603_mcu_reg_read(struct mt7603_dev *dev, u32 reg, u32 *val, bool rf);
 int mt7603_mcu_set_eeprom(struct mt7603_dev *dev);
 int mt7603_mcu_set_timing(struct mt7603_dev *dev, int slot, int sifs, int rifs,
 			  int eifs);
 void mt7603_mcu_exit(struct mt7603_dev *dev);
 
-void mt7603_wtbl_init(struct mt7603_dev *dev, int idx, int vif, const u8 *addr);
+void mt7603_wtbl_init(struct mt7603_dev *dev, int idx, int vif, const u8 *mac_addr);
 void mt7603_wtbl_clear(struct mt7603_dev *dev, int idx);
 void mt7603_wtbl_update_cap(struct mt7603_dev *dev, struct ieee80211_sta *sta);
 void mt7603_wtbl_set_rates(struct mt7603_dev *dev, struct mt7603_sta *sta,
@@ -254,7 +254,7 @@ int mt7603_tx_prepare_skb(struct mt76_dev *mdev, void *txwi_ptr,
 void mt7603_tx_complete_skb(struct mt76_dev *mdev, struct mt76_queue *q,
 			    struct mt76_queue_entry *e, bool flush);
 
-void mt7603_queue_rx_skb(struct mt76_dev *dev, enum mt76_rxq_id q,
+void mt7603_queue_rx_skb(struct mt76_dev *mdev, enum mt76_rxq_id q,
 			 struct sk_buff *skb);
 void mt7603_rx_poll_complete(struct mt76_dev *mdev, enum mt76_rxq_id q);
 

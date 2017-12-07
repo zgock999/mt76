@@ -20,13 +20,13 @@
 #include "mt76x2_eeprom.h"
 
 static void
-mt76x2_adjust_lna_gain(struct mt76x2_dev *dev, int reg, s8 offset)
+mt76x2_adjust_high_lna_gain(struct mt76x2_dev *dev, int reg, s8 offset)
 {
 	s8 gain;
 
-	gain = FIELD_GET(MT_BBP_AGC_LNA_GAIN, mt76_rr(dev, MT_BBP(AGC, reg)));
+	gain = FIELD_GET(MT_BBP_AGC_LNA_HIGH_GAIN, mt76_rr(dev, MT_BBP(AGC, reg)));
 	gain -= offset / 2;
-	mt76_rmw_field(dev, MT_BBP(AGC, reg), MT_BBP_AGC_LNA_GAIN, gain);
+	mt76_rmw_field(dev, MT_BBP(AGC, reg), MT_BBP_AGC_LNA_HIGH_GAIN, gain);
 }
 
 static void
@@ -44,8 +44,8 @@ mt76x2_apply_gain_adj(struct mt76x2_dev *dev)
 {
 	s8 *gain_adj = dev->cal.rx.high_gain;
 
-	mt76x2_adjust_lna_gain(dev, 4, gain_adj[0]);
-	mt76x2_adjust_lna_gain(dev, 5, gain_adj[1]);
+	mt76x2_adjust_high_lna_gain(dev, 4, gain_adj[0]);
+	mt76x2_adjust_high_lna_gain(dev, 5, gain_adj[1]);
 
 	mt76x2_adjust_agc_gain(dev, 8, gain_adj[0]);
 	mt76x2_adjust_agc_gain(dev, 9, gain_adj[1]);
@@ -102,26 +102,15 @@ mt76x2_limit_rate_power(struct mt76_rate_power *r, int limit)
 			r->all[i] = limit;
 }
 
-static int
-mt76x2_get_max_power(struct mt76_rate_power *r)
-{
-	int i;
-	s8 ret = 0;
-
-	for (i = 0; i < sizeof(r->all); i++)
-		ret = max(ret, r->all[i]);
-
-	return ret;
-}
-
 void mt76x2_phy_set_txpower(struct mt76x2_dev *dev)
 {
 	enum nl80211_chan_width width = dev->mt76.chandef.width;
+	struct ieee80211_channel *chan = dev->mt76.chandef.chan;
 	struct mt76x2_tx_power_info txp;
 	int txp_0, txp_1, delta = 0;
 	struct mt76_rate_power t = {};
 
-	mt76x2_get_power_info(dev, &txp);
+	mt76x2_get_power_info(dev, &txp, chan);
 
 	if (width == NL80211_CHAN_WIDTH_40)
 		delta = txp.delta_bw40;
@@ -131,11 +120,11 @@ void mt76x2_phy_set_txpower(struct mt76x2_dev *dev)
 	if (txp.target_power > dev->txpower_conf)
 		delta -= txp.target_power - dev->txpower_conf;
 
-	mt76x2_get_rate_power(dev, &t);
+	mt76x2_get_rate_power(dev, &t, chan);
 	mt76x2_add_rate_power_offset(&t, txp.chain[0].target_power +
 				   txp.chain[0].delta);
 	mt76x2_limit_rate_power(&t, dev->txpower_conf);
-	dev->txpower_cur = mt76x2_get_max_power(&t);
+	dev->txpower_cur = mt76x2_get_max_rate_power(&t);
 	mt76x2_add_rate_power_offset(&t, -(txp.chain[0].target_power +
 					 txp.chain[0].delta + delta));
 	dev->target_power = txp.chain[0].target_power;
@@ -261,8 +250,13 @@ mt76x2_phy_set_txpower_regs(struct mt76x2_dev *dev, enum nl80211_band band)
 		pa_mode[0] = 0x0000ffff;
 		pa_mode[1] = 0x00ff00ff;
 
-		mt76_wr(dev, MT_TX_ALC_CFG_2, 0x1b0f0400);
-		mt76_wr(dev, MT_TX_ALC_CFG_3, 0x1b0f0476);
+		if (mt76x2_ext_pa_enabled(dev, band)) {
+			mt76_wr(dev, MT_TX_ALC_CFG_2, 0x2f0f0400);
+			mt76_wr(dev, MT_TX_ALC_CFG_3, 0x2f0f0476);
+		} else {
+			mt76_wr(dev, MT_TX_ALC_CFG_2, 0x1b0f0400);
+			mt76_wr(dev, MT_TX_ALC_CFG_3, 0x1b0f0476);
+		}
 		mt76_wr(dev, MT_TX_ALC_CFG_4, 0);
 
 		if (mt76x2_ext_pa_enabled(dev, band))
@@ -280,7 +274,12 @@ mt76x2_phy_set_txpower_regs(struct mt76x2_dev *dev, enum nl80211_band band)
 	mt76_wr(dev, MT_RF_PA_MODE_CFG1, pa_mode[1]);
 
 	if (mt76x2_ext_pa_enabled(dev, band)) {
-		u32 val = 0x3c3c023c;
+		u32 val;
+
+		if (band == NL80211_BAND_2GHZ)
+			val = 0x3c3c023c;
+		else
+			val = 0x363c023c;
 
 		mt76_wr(dev, MT_TX0_RF_GAIN_CORR, val);
 		mt76_wr(dev, MT_TX1_RF_GAIN_CORR, val);
@@ -315,8 +314,7 @@ mt76x2_configure_tx_delay(struct mt76x2_dev *dev, enum nl80211_band band, u8 bw)
 	mt76_wr(dev, MT_TX_SW_CFG0, cfg0);
 	mt76_wr(dev, MT_TX_SW_CFG1, cfg1);
 
-	mt76_rmw_field(dev, MT_XIFS_TIME_CFG, MT_XIFS_TIME_CFG_CCK_SIFS,
-		       13 + (bw ? 1 : 0));
+	mt76_rmw_field(dev, MT_XIFS_TIME_CFG, MT_XIFS_TIME_CFG_OFDM_SIFS, 15);
 }
 
 static void
@@ -406,25 +404,27 @@ mt76x2_get_rssi_gain_thresh(struct mt76x2_dev *dev)
 	}
 }
 
-static void
-mt76x2_phy_update_channel_gain(struct mt76x2_dev *dev)
+static int
+mt76x2_get_low_rssi_gain_thresh(struct mt76x2_dev *dev)
 {
-	u32 val = mt76_rr(dev, MT_BBP(AGC, 20));
-	int rssi0 = (s8) FIELD_GET(MT_BBP_AGC20_RSSI0, val);
-	int rssi1 = (s8) FIELD_GET(MT_BBP_AGC20_RSSI1, val);
-	u8 *gain = dev->cal.agc_gain_init, gain_delta;
-	bool low_gain;
+	switch (dev->mt76.chandef.width) {
+	case NL80211_CHAN_WIDTH_80:
+		return -76;
+	case NL80211_CHAN_WIDTH_40:
+		return -79;
+	default:
+		return -82;
+	}
+}
 
-	dev->cal.avg_rssi[0] = (dev->cal.avg_rssi[0] * 15) / 16 + (rssi0 << 8);
-	dev->cal.avg_rssi[1] = (dev->cal.avg_rssi[1] * 15) / 16 + (rssi1 << 8);
-	dev->cal.avg_rssi_all = (dev->cal.avg_rssi[0] +
-				 dev->cal.avg_rssi[1]) / 512;
+static void
+mt76x2_phy_set_gain_val(struct mt76x2_dev *dev)
+{
+	u32 val;
+	u8 gain_val[2];
 
-	low_gain = dev->cal.avg_rssi_all > mt76x2_get_rssi_gain_thresh(dev);
-	if (dev->cal.low_gain == low_gain)
-		return;
-
-	dev->cal.low_gain = low_gain;
+	gain_val[0] = dev->cal.agc_gain_cur[0] - dev->cal.agc_gain_adjust;
+	gain_val[1] = dev->cal.agc_gain_cur[1] - dev->cal.agc_gain_adjust;
 
 	if (dev->mt76.chandef.width >= NL80211_CHAN_WIDTH_40)
 		val = 0x1e42 << 16;
@@ -433,12 +433,64 @@ mt76x2_phy_update_channel_gain(struct mt76x2_dev *dev)
 
 	val |= 0xf8;
 
+	mt76_wr(dev, MT_BBP(AGC, 8),
+		val | FIELD_PREP(MT_BBP_AGC_GAIN, gain_val[0]));
+	mt76_wr(dev, MT_BBP(AGC, 9),
+		val | FIELD_PREP(MT_BBP_AGC_GAIN, gain_val[1]));
+
+	if (dev->mt76.chandef.chan->flags & IEEE80211_CHAN_RADAR)
+		mt76x2_dfs_adjust_agc(dev);
+}
+
+static void
+mt76x2_phy_adjust_vga_gain(struct mt76x2_dev *dev)
+{
+	u32 false_cca;
+	u8 limit = dev->cal.low_gain > 1 ? 4 : 16;
+
+	false_cca = FIELD_GET(MT_RX_STAT_1_CCA_ERRORS, mt76_rr(dev, MT_RX_STAT_1));
+	if (false_cca > 800 && dev->cal.agc_gain_adjust < limit)
+		dev->cal.agc_gain_adjust += 2;
+	else if (false_cca < 10 && dev->cal.agc_gain_adjust > 0)
+		dev->cal.agc_gain_adjust -= 2;
+	else
+		return;
+
+	mt76x2_phy_set_gain_val(dev);
+}
+
+static void
+mt76x2_phy_update_channel_gain(struct mt76x2_dev *dev)
+{
+	u32 val = mt76_rr(dev, MT_BBP(AGC, 20));
+	int rssi0 = (s8) FIELD_GET(MT_BBP_AGC20_RSSI0, val);
+	int rssi1 = (s8) FIELD_GET(MT_BBP_AGC20_RSSI1, val);
+	u8 *gain = dev->cal.agc_gain_init;
+	u8 gain_delta;
+	int low_gain;
+
+	dev->cal.avg_rssi[0] = (dev->cal.avg_rssi[0] * 15) / 16 + (rssi0 << 8);
+	dev->cal.avg_rssi[1] = (dev->cal.avg_rssi[1] * 15) / 16 + (rssi1 << 8);
+	dev->cal.avg_rssi_all = (dev->cal.avg_rssi[0] +
+				 dev->cal.avg_rssi[1]) / 512;
+
+	low_gain = (dev->cal.avg_rssi_all > mt76x2_get_rssi_gain_thresh(dev)) +
+		   (dev->cal.avg_rssi_all > mt76x2_get_low_rssi_gain_thresh(dev));
+
+	if (dev->cal.low_gain == low_gain) {
+		mt76x2_phy_adjust_vga_gain(dev);
+		return;
+	}
+
+	dev->cal.low_gain = low_gain;
+
 	if (dev->mt76.chandef.width == NL80211_CHAN_WIDTH_80)
-		mt76_wr(dev, MT_BBP(RXO, 14), 0x00560411);
+		mt76_wr(dev, MT_BBP(RXO, 14), 0x00560211);
 	else
 		mt76_wr(dev, MT_BBP(RXO, 14), 0x00560423);
 
 	if (low_gain) {
+		mt76_wr(dev, MT_BBP(RXO, 18), 0xf000a991);
 		mt76_wr(dev, MT_BBP(AGC, 35), 0x08080808);
 		mt76_wr(dev, MT_BBP(AGC, 37), 0x08080808);
 		if (mt76x2_has_ext_lna(dev))
@@ -446,18 +498,19 @@ mt76x2_phy_update_channel_gain(struct mt76x2_dev *dev)
 		else
 			gain_delta = 14;
 	} else {
-		mt76_wr(dev, MT_BBP(AGC, 35), 0x11111116);
-		mt76_wr(dev, MT_BBP(AGC, 37), 0x1010161C);
+		mt76_wr(dev, MT_BBP(RXO, 18), 0xf000a990);
+		if (dev->mt76.chandef.width == NL80211_CHAN_WIDTH_80)
+			mt76_wr(dev, MT_BBP(AGC, 35), 0x10101014);
+		else
+			mt76_wr(dev, MT_BBP(AGC, 35), 0x11111116);
+		mt76_wr(dev, MT_BBP(AGC, 37), 0x2121262C);
 		gain_delta = 0;
 	}
 
-	mt76_wr(dev, MT_BBP(AGC, 8),
-		val | FIELD_PREP(MT_BBP_AGC_GAIN, gain[0] - gain_delta));
-	mt76_wr(dev, MT_BBP(AGC, 9),
-		val | FIELD_PREP(MT_BBP_AGC_GAIN, gain[1] - gain_delta));
-
-	if (dev->mt76.chandef.chan->flags & IEEE80211_CHAN_RADAR)
-		mt76x2_dfs_adjust_agc(dev);
+	dev->cal.agc_gain_cur[0] = gain[0] - gain_delta;
+	dev->cal.agc_gain_cur[1] = gain[1] - gain_delta;
+	dev->cal.agc_gain_adjust = 0;
+	mt76x2_phy_set_gain_val(dev);
 }
 
 int mt76x2_phy_set_channel(struct mt76x2_dev *dev,
@@ -494,7 +547,6 @@ int mt76x2_phy_set_channel(struct mt76x2_dev *dev,
 	u8 bw, bw_index;
 	int freq, freq1;
 	int ret;
-	u8 sifs = 13;
 
 	dev->cal.channel_cal_done = false;
 	freq = chandef->chan->center_freq;
@@ -546,11 +598,6 @@ int mt76x2_phy_set_channel(struct mt76x2_dev *dev,
 		  MT_EXT_CCA_CFG_CCA_MASK),
 		 ext_cca_chan[ch_group_index]);
 
-	if (chandef->width >= NL80211_CHAN_WIDTH_40)
-		sifs++;
-
-	mt76_rmw_field(dev, MT_XIFS_TIME_CFG, MT_XIFS_TIME_CFG_OFDM_SIFS, sifs);
-
 	ret = mt76x2_mcu_set_channel(dev, channel, bw, bw_index, scan);
 	if (ret)
 		return ret;
@@ -588,6 +635,8 @@ int mt76x2_phy_set_channel(struct mt76x2_dev *dev,
 	dev->cal.low_gain = -1;
 	mt76x2_phy_channel_calibrate(dev, true);
 	mt76x2_get_agc_gain(dev, dev->cal.agc_gain_init);
+	memcpy(dev->cal.agc_gain_cur, dev->cal.agc_gain_init,
+	       sizeof(dev->cal.agc_gain_cur));
 
 	ieee80211_queue_delayed_work(mt76_hw(dev), &dev->cal_work,
 				     MT_CALIBRATE_INTERVAL);
@@ -615,7 +664,7 @@ mt76x2_phy_tssi_compensate(struct mt76x2_dev *dev)
 			return;
 
 		dev->cal.tssi_comp_pending = false;
-		mt76x2_get_power_info(dev, &txp);
+		mt76x2_get_power_info(dev, &txp, chan);
 
 		if (mt76x2_ext_pa_enabled(dev, chan->band))
 			t.pa_mode = 1;

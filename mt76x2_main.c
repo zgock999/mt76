@@ -156,6 +156,9 @@ mt76x2_config(struct ieee80211_hw *hw, u32 changed)
 	if (changed & IEEE80211_CONF_CHANGE_POWER) {
 		dev->txpower_conf = hw->conf.power_level * 2;
 
+		/* convert to per-chain power for 2x2 devices */
+		dev->txpower_conf -= 6;
+
 		if (test_bit(MT76_STATE_RUNNING, &dev->mt76.state)) {
 			mt76x2_phy_set_txpower(dev);
 			mt76x2_tx_set_txpwr_auto(dev, dev->txpower_conf);
@@ -263,7 +266,7 @@ mt76x2_sta_add(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	msta->wcid.idx = idx;
 	msta->wcid.hw_key_idx = -1;
 	mt76x2_mac_wcid_setup(dev, idx, mvif->idx, sta->addr);
-	mt76_clear(dev, MT_WCID_DROP(idx), MT_WCID_DROP_MASK(idx));
+	mt76x2_mac_wcid_set_drop(dev, idx, false);
 	for (i = 0; i < ARRAY_SIZE(sta->txq); i++)
 		mt76x2_txq_init(dev, sta->txq[i]);
 
@@ -288,7 +291,7 @@ mt76x2_sta_remove(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	rcu_assign_pointer(dev->wcid[idx], NULL);
 	for (i = 0; i < ARRAY_SIZE(sta->txq); i++)
 		mt76_txq_remove(&dev->mt76, sta->txq[i]);
-	mt76_set(dev, MT_WCID_DROP(idx), MT_WCID_DROP_MASK(idx));
+	mt76x2_mac_wcid_set_drop(dev, idx, true);
 	mt76_wcid_free(dev->wcid_mask, idx);
 	mt76x2_mac_wcid_setup(dev, idx, 0, NULL);
 	mutex_unlock(&dev->mutex);
@@ -306,11 +309,11 @@ mt76x2_sta_notify(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 
 	switch (cmd) {
 	case STA_NOTIFY_SLEEP:
-		mt76_set(dev, MT_WCID_DROP(idx), MT_WCID_DROP_MASK(idx));
+		mt76x2_mac_wcid_set_drop(dev, idx, true);
 		mt76_stop_tx_queues(&dev->mt76, sta, true);
 		break;
 	case STA_NOTIFY_AWAKE:
-		mt76_clear(dev, MT_WCID_DROP(idx), MT_WCID_DROP_MASK(idx));
+		mt76x2_mac_wcid_set_drop(dev, idx, false);
 		break;
 	}
 }
@@ -344,9 +347,15 @@ mt76x2_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 	if (cmd == SET_KEY) {
 		key->hw_key_idx = wcid->idx;
 		wcid->hw_key_idx = idx;
+		if (key->flags & IEEE80211_KEY_FLAG_RX_MGMT) {
+			key->flags |= IEEE80211_KEY_FLAG_SW_MGMT_TX;
+			wcid->sw_iv = true;
+		}
 	} else {
-		if (idx == wcid->hw_key_idx)
+		if (idx == wcid->hw_key_idx) {
 			wcid->hw_key_idx = -1;
+			wcid->sw_iv = true;
+		}
 
 		key = NULL;
 	}
@@ -438,6 +447,10 @@ mt76x2_get_txpower(struct ieee80211_hw *hw, struct ieee80211_vif *vif, int *dbm)
 	struct mt76x2_dev *dev = hw->priv;
 
 	*dbm = dev->txpower_cur / 2;
+
+	/* convert from per-chain power to combined output on 2x2 devices */
+	*dbm += 3;
+
 	return 0;
 }
 

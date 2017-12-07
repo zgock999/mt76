@@ -66,6 +66,11 @@
 
 #define MT_WPDMA_RST_IDX		MT_HIF(0x20c)
 
+#define MT_WPDMA_DEBUG			MT_HIF(0x244)
+#define MT_WPDMA_DEBUG_VALUE		GENMASK(17, 0)
+#define MT_WPDMA_DEBUG_SEL		BIT(27)
+#define MT_WPDMA_DEBUG_IDX		GENMASK(31, 28)
+
 #define MT_TX_RING_BASE			MT_HIF(0x300)
 #define MT_RX_RING_BASE			MT_HIF(0x400)
 
@@ -103,10 +108,10 @@
 #define MT_PSE_BASE			0x8000
 #define MT_PSE(ofs)			(MT_PSE_BASE + (ofs))
 
-#define MT_PSE_RESET			MT_PSE(0x16c)
-#define MT_PSE_RESET_SW			BIT(0)
-#define MT_PSE_RESET_SW_S		BIT(1)
-#define MT_PSE_RESET_QUEUES		GENMASK(6, 2)
+#define MT_MCU_DEBUG_RESET		MT_PSE(0x16c)
+#define MT_MCU_DEBUG_RESET_PSE		BIT(0)
+#define MT_MCU_DEBUG_RESET_PSE_S	BIT(1)
+#define MT_MCU_DEBUG_RESET_QUEUES	GENMASK(6, 2)
 
 #define MT_PSE_FC_P0			MT_PSE(0x120)
 #define MT_PSE_FC_P0_MIN_RESERVE	GENMASK(11, 0)
@@ -484,6 +489,30 @@ enum {
 #define MT_TX_HW_QUEUE_MCU		5
 #define MT_TX_HW_QUEUE_BCN		7
 #define MT_TX_HW_QUEUE_BMC		8
+
+#define MT_LED_BASE_PHYS		0x80024000
+#define MT_LED_PHYS(_n)			(MT_LED_BASE_PHYS + (_n))
+
+#define MT_LED_CTRL			MT_LED_PHYS(0x00)
+
+#define MT_LED_CTRL_REPLAY(_n)		BIT(0 + (8 * (_n)))
+#define MT_LED_CTRL_POLARITY(_n)	BIT(1 + (8 * (_n)))
+#define MT_LED_CTRL_TX_BLINK_MODE(_n)	BIT(2 + (8 * (_n)))
+#define MT_LED_CTRL_TX_MANUAL_BLINK(_n)	BIT(3 + (8 * (_n)))
+#define MT_LED_CTRL_TX_OVER_BLINK(_n)	BIT(5 + (8 * (_n)))
+#define MT_LED_CTRL_KICK(_n)		BIT(7 + (8 * (_n)))
+
+#define MT_LED_STATUS_0(_n)		MT_LED_PHYS(0x10 + ((_n) * 8))
+#define MT_LED_STATUS_1(_n)		MT_LED_PHYS(0x14 + ((_n) * 8))
+#define MT_LED_STATUS_OFF_MASK		GENMASK(31, 24)
+#define MT_LED_STATUS_OFF(_v)		(((_v) << __ffs(MT_LED_STATUS_OFF_MASK)) & \
+					 MT_LED_STATUS_OFF_MASK)
+#define MT_LED_STATUS_ON_MASK		GENMASK(23, 16)
+#define MT_LED_STATUS_ON(_v)		(((_v) << __ffs(MT_LED_STATUS_ON_MASK)) & \
+					 MT_LED_STATUS_ON_MASK)
+#define MT_LED_STATUS_DURATION_MASK	GENMASK(15, 0)
+#define MT_LED_STATUS_DURATION(_v)	(((_v) << __ffs(MT_LED_STATUS_DURATION_MASK)) & \
+					 MT_LED_STATUS_DURATION_MASK)
 
 #define MT_CLIENT_BASE_PHYS_ADDR	0x800c0000
 

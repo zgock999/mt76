@@ -41,7 +41,6 @@ mt7603_stop(struct ieee80211_hw *hw)
 
 	clear_bit(MT76_STATE_RUNNING, &dev->mt76.state);
 	cancel_delayed_work_sync(&dev->mac_work);
-	mt7603_mac_watchdog_reset(dev);
 	mt7603_mac_stop(dev);
 }
 
@@ -95,6 +94,7 @@ mt7603_add_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 
 	eth_broadcast_addr(bc_addr);
 	mt7603_wtbl_init(dev, idx, mvif->idx, bc_addr);
+	mt7603_wtbl_set_ps(dev, idx, false);
 
 	rcu_assign_pointer(dev->wcid[idx], &mvif->sta.wcid);
 	mt7603_txq_init(dev, vif->txq);

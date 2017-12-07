@@ -28,7 +28,7 @@ void mt76x2_mac_set_bssid(struct mt76x2_dev *dev, u8 idx, const u8 *addr)
 		       get_unaligned_le16(addr + 4));
 }
 
-static void
+static int
 mt76x2_mac_process_rate(struct ieee80211_rx_status *status, u16 rate)
 {
 	u8 idx = FIELD_GET(MT_RXWI_RATE_INDEX, rate);
@@ -42,56 +42,57 @@ mt76x2_mac_process_rate(struct ieee80211_rx_status *status, u16 rate)
 			idx += 4;
 
 		status->rate_idx = idx;
-		return;
+		return 0;
 	case MT_PHY_TYPE_CCK:
 		if (idx >= 8) {
 			idx -= 8;
-			status->flag |= RX_FLAG_SHORTPRE;
+			status->enc_flags |= RX_ENC_FLAG_SHORTPRE;
 		}
 
 		if (idx >= 4)
 			idx = 0;
 
 		status->rate_idx = idx;
-		return;
+		return 0;
 	case MT_PHY_TYPE_HT_GF:
-		status->flag |= RX_FLAG_HT_GF;
+		status->enc_flags |= RX_ENC_FLAG_HT_GF;
 		/* fall through */
 	case MT_PHY_TYPE_HT:
-		status->flag |= RX_FLAG_HT;
+		status->encoding = RX_ENC_HT;
 		status->rate_idx = idx;
 		break;
 	case MT_PHY_TYPE_VHT:
-		status->flag |= RX_FLAG_VHT;
+		status->encoding = RX_ENC_VHT;
 		status->rate_idx = FIELD_GET(MT_RATE_INDEX_VHT_IDX, idx);
-		status->vht_nss = FIELD_GET(MT_RATE_INDEX_VHT_NSS, idx) + 1;
+		status->nss = FIELD_GET(MT_RATE_INDEX_VHT_NSS, idx) + 1;
 		break;
 	default:
-		WARN_ON(1);
-		return;
+		return -EINVAL;
 	}
 
 	if (rate & MT_RXWI_RATE_LDPC)
-		status->flag |= RX_FLAG_LDPC;
+		status->enc_flags |= RX_ENC_FLAG_LDPC;
 
 	if (rate & MT_RXWI_RATE_SGI)
-		status->flag |= RX_FLAG_SHORT_GI;
+		status->enc_flags |= RX_ENC_FLAG_SHORT_GI;
 
 	if (rate & MT_RXWI_RATE_STBC)
-		status->flag |= 1 << RX_FLAG_STBC_SHIFT;
+		status->enc_flags |= 1 << RX_ENC_FLAG_STBC_SHIFT;
 
 	switch (FIELD_GET(MT_RXWI_RATE_BW, rate)) {
 	case MT_PHY_BW_20:
 		break;
 	case MT_PHY_BW_40:
-		status->flag |= RX_FLAG_40MHZ;
+		status->bw = RATE_INFO_BW_40;
 		break;
 	case MT_PHY_BW_80:
-		status->vht_flag |= RX_VHT_FLAG_80MHZ;
+		status->bw = RATE_INFO_BW_80;
 		break;
 	default:
 		break;
 	}
+
+	return 0;
 }
 
 static __le16
@@ -145,6 +146,16 @@ mt76x2_mac_tx_rate_val(struct mt76x2_dev *dev,
 	return cpu_to_le16(rateval);
 }
 
+void mt76x2_mac_wcid_set_drop(struct mt76x2_dev *dev, u8 idx, bool drop)
+{
+	u32 val = mt76_rr(dev, MT_WCID_DROP(idx));
+	u32 bit = MT_WCID_DROP_MASK(idx);
+
+	/* prevent unnecessary writes */
+	if ((val & bit) != (bit * drop))
+		mt76_wr(dev, MT_WCID_DROP(idx), (val & ~bit) | (bit * drop));
+}
+
 void mt76x2_mac_wcid_set_rate(struct mt76x2_dev *dev, struct mt76_wcid *wcid,
 			      const struct ieee80211_tx_rate *rate)
 {
@@ -160,10 +171,12 @@ void mt76x2_mac_write_txwi(struct mt76x2_dev *dev, struct mt76x2_txwi *txwi,
 {
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
 	struct ieee80211_tx_rate *rate = &info->control.rates[0];
+	struct ieee80211_key_conf *key = info->control.hw_key;
 	u16 rate_ht_mask = FIELD_PREP(MT_RXWI_RATE_PHY, BIT(1) | BIT(2));
 	u16 txwi_flags = 0;
 	u8 nss;
 	s8 txpwr_adj, max_txpwr_adj;
+	u8 ccmp_pn[8];
 
 	memset(txwi, 0, sizeof(*txwi));
 
@@ -173,6 +186,20 @@ void mt76x2_mac_write_txwi(struct mt76x2_dev *dev, struct mt76x2_txwi *txwi,
 		txwi->wcid = 0xff;
 
 	txwi->pktid = 1;
+
+	if (wcid && wcid->sw_iv && key) {
+		u64 pn = atomic64_inc_return(&key->tx_pn);
+		ccmp_pn[0] = pn;
+		ccmp_pn[1] = pn >> 8;
+		ccmp_pn[2] = 0;
+		ccmp_pn[3] = 0x20 | (key->keyidx << 6);
+		ccmp_pn[4] = pn >> 16;
+		ccmp_pn[5] = pn >> 24;
+		ccmp_pn[6] = pn >> 32;
+		ccmp_pn[7] = pn >> 40;
+		txwi->iv = *((u32 *) &ccmp_pn[0]);
+		txwi->eiv = *((u32 *) &ccmp_pn[1]);
+	}
 
 	spin_lock_bh(&dev->mt76.lock);
 	if (rate->idx < 0 || !rate->count) {
@@ -262,12 +289,10 @@ int mt76x2_mac_process_rx(struct mt76x2_dev *dev, struct sk_buff *skb,
 	status->freq = dev->mt76.chandef.chan->center_freq;
 	status->band = dev->mt76.chandef.chan->band;
 
-	mt76x2_mac_process_rate(status, rate);
-
-	return 0;
+	return mt76x2_mac_process_rate(status, rate);
 }
 
-static void
+static int
 mt76x2_mac_process_tx_rate(struct ieee80211_tx_rate *txrate, u16 rate,
 			   enum nl80211_band band)
 {
@@ -283,13 +308,13 @@ mt76x2_mac_process_tx_rate(struct ieee80211_tx_rate *txrate, u16 rate,
 			idx += 4;
 
 		txrate->idx = idx;
-		return;
+		return 0;
 	case MT_PHY_TYPE_CCK:
 		if (idx >= 8)
 			idx -= 8;
 
 		txrate->idx = idx;
-		return;
+		return 0;
 	case MT_PHY_TYPE_HT_GF:
 		txrate->flags |= IEEE80211_TX_RC_GREEN_FIELD;
 		/* fall through */
@@ -302,8 +327,7 @@ mt76x2_mac_process_tx_rate(struct ieee80211_tx_rate *txrate, u16 rate,
 		txrate->idx = idx;
 		break;
 	default:
-		WARN_ON(1);
-		return;
+		return -EINVAL;
 	}
 
 	switch (FIELD_GET(MT_RXWI_RATE_BW, rate)) {
@@ -316,12 +340,14 @@ mt76x2_mac_process_tx_rate(struct ieee80211_tx_rate *txrate, u16 rate,
 		txrate->flags |= IEEE80211_TX_RC_80_MHZ_WIDTH;
 		break;
 	default:
-		WARN_ON(1);
+		return -EINVAL;
 		break;
 	}
 
 	if (rate & MT_RXWI_RATE_SGI)
 		txrate->flags |= IEEE80211_TX_RC_SHORT_GI;
+
+	return 0;
 }
 
 static void
@@ -332,6 +358,9 @@ mt76x2_mac_fill_tx_status(struct mt76x2_dev *dev,
 	struct ieee80211_tx_rate *rate = info->status.rates;
 	int cur_idx, last_rate;
 	int i;
+
+	if (!n_frames)
+		return;
 
 	last_rate = min_t(int, st->retry, IEEE80211_TX_MAX_RATES - 1);
 	mt76x2_mac_process_tx_rate(&rate[last_rate], st->rate,
@@ -395,19 +424,17 @@ mt76x2_send_tx_status(struct mt76x2_dev *dev, struct mt76x2_tx_status *stat,
 		stat_cache |= ((u32) msta->status.retry) << 16;
 
 		if (*update == 0 && stat_val == stat_cache &&
-		    stat->wcid == msta->status.wcid && ++msta->n_frames < 32)
+		    stat->wcid == msta->status.wcid && msta->n_frames < 32) {
+			msta->n_frames++;
 			goto out;
+		}
 
 		mt76x2_mac_fill_tx_status(dev, &info, &msta->status,
 					  msta->n_frames);
 
 		msta->status = *stat;
-		if (*update == 1) {
-			msta->n_frames = 1;
-			*update = 0;
-		} else {
-			msta->n_frames = 0;
-		}
+		msta->n_frames = 1;
+		*update = 0;
 	} else {
 		mt76x2_mac_fill_tx_status(dev, &info, stat, 1);
 		*update = 1;
@@ -534,6 +561,12 @@ void mt76x2_mac_wcid_setup(struct mt76x2_dev *dev, u8 idx, u8 vif_idx, u8 *mac)
 	       FIELD_PREP(MT_WCID_ATTR_BSS_IDX_EXT, !!(vif_idx & 8));
 
 	mt76_wr(dev, MT_WCID_ATTR(idx), attr);
+
+	mt76_wr(dev, MT_WCID_TX_RATE(idx), 0);
+	mt76_wr(dev, MT_WCID_TX_RATE(idx) + 4, 0);
+
+	if (idx >= 128)
+		return;
 
 	if (mac)
 		memcpy(addr.macaddr, mac, ETH_ALEN);
