@@ -33,6 +33,9 @@ static struct sk_buff *mt7603_mcu_msg_alloc(const void *data, int len)
 
 	skb = alloc_skb(len + sizeof(struct mt7603_mcu_txd),
 			GFP_KERNEL);
+	if (!skb)
+		return NULL;
+
 	skb_reserve(skb, sizeof(struct mt7603_mcu_txd));
 	if (data && len)
 		memcpy(skb_put(skb, len), data, len);
@@ -410,6 +413,9 @@ int mt7603_mcu_set_eeprom(struct mt7603_dev *dev)
 	BUILD_BUG_ON(ARRAY_SIZE(req_fields) * sizeof(*data) > size);
 
 	skb = mt7603_mcu_msg_alloc(NULL, size + sizeof(req_hdr));
+	if (!skb)
+		return -ENOMEM;
+
 	memcpy(skb_put(skb, sizeof(req_hdr)), &req_hdr, sizeof(req_hdr));
 	data = (struct req_data *) skb_put(skb, size);
 	memset(data, 0, size);
