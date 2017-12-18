@@ -262,6 +262,10 @@ int mt76_register_device(struct mt76_dev *dev, bool vht,
 
 	wiphy->features |= NL80211_FEATURE_ACTIVE_MONITOR;
 
+	wiphy->available_antennas_tx = 3;
+	wiphy->available_antennas_rx = 3;
+	dev->antenna_mask = 3;
+
 	hw->txq_data_size = sizeof(struct mt76_txq);
 	hw->max_tx_fragments = 16;
 
