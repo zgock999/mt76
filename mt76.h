@@ -355,6 +355,11 @@ void mt76_set_channel(struct mt76_dev *dev);
 int mt76_get_survey(struct ieee80211_hw *hw, int idx,
 		    struct survey_info *survey);
 
+void mt76_set_ht_cap(struct mt76_dev *dev,
+		     struct ieee80211_sta_ht_cap *ht_cap);
+void mt76_set_vht_cap(struct mt76_dev *dev,
+		      struct ieee80211_sta_vht_cap *vht_cap);
+
 /* internal */
 void mt76_tx_free(struct mt76_dev *dev);
 void mt76_put_txwi(struct mt76_dev *dev, struct mt76_txwi_cache *t);

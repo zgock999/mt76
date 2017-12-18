@@ -119,16 +119,66 @@ static int mt76_led_init(struct mt76_dev *dev)
 	return devm_led_classdev_register(dev->dev, &dev->led_cdev);
 }
 
+void mt76_set_ht_cap(struct mt76_dev *dev,
+		     struct ieee80211_sta_ht_cap *ht_cap)
+{
+	int i, nstream = __sw_hweight8(dev->antenna_mask);
+
+	ht_cap->ht_supported = true;
+	ht_cap->cap |= IEEE80211_HT_CAP_SUP_WIDTH_20_40 |
+		       IEEE80211_HT_CAP_GRN_FLD |
+		       IEEE80211_HT_CAP_SGI_20 |
+		       IEEE80211_HT_CAP_SGI_40 |
+		       (1 << IEEE80211_HT_CAP_RX_STBC_SHIFT);
+	if (nstream > 1)
+		ht_cap->cap |= IEEE80211_HT_CAP_TX_STBC;
+	else
+		ht_cap->cap &= ~IEEE80211_HT_CAP_TX_STBC;
+
+	for (i = 0; i < IEEE80211_HT_MCS_MASK_LEN; i++)
+		ht_cap->mcs.rx_mask[i] = (i < nstream) ? 0xff : 0;
+	ht_cap->mcs.tx_params = IEEE80211_HT_MCS_TX_DEFINED;
+
+	ht_cap->ampdu_factor = IEEE80211_HT_MAX_AMPDU_64K;
+	ht_cap->ampdu_density = IEEE80211_HT_MPDU_DENSITY_4;
+}
+EXPORT_SYMBOL_GPL(mt76_set_ht_cap);
+
+void mt76_set_vht_cap(struct mt76_dev *dev,
+		      struct ieee80211_sta_vht_cap *vht_cap)
+{
+	int i, nstream = __sw_hweight8(dev->antenna_mask);
+	u16 mcs_map = 0;
+
+	vht_cap->vht_supported = true;
+
+	for (i = 0; i < 8; i++) {
+		if (i < nstream)
+			mcs_map |= (IEEE80211_VHT_MCS_SUPPORT_0_9 << (i * 2));
+		else
+			mcs_map |=
+				(IEEE80211_VHT_MCS_NOT_SUPPORTED << (i * 2));
+	}
+
+	vht_cap->vht_mcs.rx_mcs_map = cpu_to_le16(mcs_map);
+	vht_cap->vht_mcs.tx_mcs_map = cpu_to_le16(mcs_map);
+	vht_cap->cap |= IEEE80211_VHT_CAP_RXLDPC |
+			IEEE80211_VHT_CAP_RXSTBC_1 |
+			IEEE80211_VHT_CAP_SHORT_GI_80;
+	if (nstream > 1)
+		vht_cap->cap |= IEEE80211_VHT_CAP_TXSTBC;
+	else
+		vht_cap->cap &= ~IEEE80211_VHT_CAP_TXSTBC;
+}
+EXPORT_SYMBOL_GPL(mt76_set_vht_cap);
+
 static int
 mt76_init_sband(struct mt76_dev *dev, struct mt76_sband *msband,
 		const struct ieee80211_channel *chan, int n_chan,
 		struct ieee80211_rate *rates, int n_rates, bool vht)
 {
 	struct ieee80211_supported_band *sband = &msband->sband;
-	struct ieee80211_sta_ht_cap *ht_cap;
-	struct ieee80211_sta_vht_cap *vht_cap;
 	void *chanlist;
-	u16 mcs_map;
 	int size;
 
 	size = n_chan * sizeof(*chan);
@@ -147,42 +197,9 @@ mt76_init_sband(struct mt76_dev *dev, struct mt76_sband *msband,
 	sband->n_bitrates = n_rates;
 	dev->chandef.chan = &sband->channels[0];
 
-	ht_cap = &sband->ht_cap;
-	ht_cap->ht_supported = true;
-	ht_cap->cap |= IEEE80211_HT_CAP_SUP_WIDTH_20_40 |
-		       IEEE80211_HT_CAP_GRN_FLD |
-		       IEEE80211_HT_CAP_SGI_20 |
-		       IEEE80211_HT_CAP_SGI_40 |
-		       IEEE80211_HT_CAP_TX_STBC |
-		       (1 << IEEE80211_HT_CAP_RX_STBC_SHIFT);
-
-	ht_cap->mcs.rx_mask[0] = 0xff;
-	ht_cap->mcs.rx_mask[1] = 0xff;
-	ht_cap->mcs.tx_params = IEEE80211_HT_MCS_TX_DEFINED;
-	ht_cap->ampdu_factor = IEEE80211_HT_MAX_AMPDU_64K;
-	ht_cap->ampdu_density = IEEE80211_HT_MPDU_DENSITY_4;
-
-	if (!vht)
-		return 0;
-
-	vht_cap = &sband->vht_cap;
-	vht_cap->vht_supported = true;
-
-	mcs_map = (IEEE80211_VHT_MCS_SUPPORT_0_9 << (0 * 2)) |
-		  (IEEE80211_VHT_MCS_SUPPORT_0_9 << (1 * 2)) |
-		  (IEEE80211_VHT_MCS_NOT_SUPPORTED << (2 * 2)) |
-		  (IEEE80211_VHT_MCS_NOT_SUPPORTED << (3 * 2)) |
-		  (IEEE80211_VHT_MCS_NOT_SUPPORTED << (4 * 2)) |
-		  (IEEE80211_VHT_MCS_NOT_SUPPORTED << (5 * 2)) |
-		  (IEEE80211_VHT_MCS_NOT_SUPPORTED << (6 * 2)) |
-		  (IEEE80211_VHT_MCS_NOT_SUPPORTED << (7 * 2));
-
-	vht_cap->vht_mcs.rx_mcs_map = cpu_to_le16(mcs_map);
-	vht_cap->vht_mcs.tx_mcs_map = cpu_to_le16(mcs_map);
-	vht_cap->cap |= IEEE80211_VHT_CAP_RXLDPC |
-			IEEE80211_VHT_CAP_TXSTBC |
-			IEEE80211_VHT_CAP_RXSTBC_1 |
-			IEEE80211_VHT_CAP_SHORT_GI_80;
+	mt76_set_ht_cap(dev, &sband->ht_cap);
+	if (vht)
+		mt76_set_vht_cap(dev, &sband->vht_cap);
 
 	return 0;
 }
