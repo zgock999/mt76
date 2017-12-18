@@ -231,6 +231,7 @@ mt76x2_init_beacon_offsets(struct mt76x2_dev *dev)
 int mt76x2_mac_reset(struct mt76x2_dev *dev, bool hard)
 {
 	static const u8 null_addr[ETH_ALEN] = {};
+	const u8 *macaddr = dev->mt76.macaddr;
 	u32 val;
 	int i, k;
 
@@ -270,11 +271,13 @@ int mt76x2_mac_reset(struct mt76x2_dev *dev, bool hard)
 	mt76_wr(dev, MT_MCU_CLOCK_CTL, 0x1401);
 	mt76_clear(dev, MT_FCE_L2_STUFF, MT_FCE_L2_STUFF_WR_MPDU_LEN_EN);
 
-	mt76_wr(dev, MT_MAC_ADDR_DW0, 0);
-	mt76_wr(dev, MT_MAC_ADDR_DW1, 0);
+	mt76_wr(dev, MT_MAC_ADDR_DW0, get_unaligned_le32(macaddr));
+	mt76_wr(dev, MT_MAC_ADDR_DW1, get_unaligned_le16(macaddr + 4));
 
-	mt76_wr(dev, MT_MAC_BSSID_DW0, 0);
-	mt76_wr(dev, MT_MAC_BSSID_DW1, 0);
+	mt76_wr(dev, MT_MAC_BSSID_DW0, get_unaligned_le32(macaddr));
+	mt76_wr(dev, MT_MAC_BSSID_DW1, get_unaligned_le16(macaddr + 4) |
+		FIELD_PREP(MT_MAC_BSSID_DW1_MBSS_MODE, 3) | /* 8 beacons */
+		MT_MAC_BSSID_DW1_MBSS_LOCAL_BIT);
 
 	mt76_set(dev, MT_MAC_ADDR_EXT_CTL, MT_MAC_ADDR_EXT_CTL_EN);
 
@@ -295,9 +298,12 @@ int mt76x2_mac_reset(struct mt76x2_dev *dev, bool hard)
 	for (i = 0; i < 256; i++)
 		mt76x2_mac_wcid_setup(dev, i, 0, NULL);
 
-	for (i = 0; i < 16; i++)
+	for (i = 0; i < 16; i++) {
 		for (k = 0; k < 4; k++)
 			mt76x2_mac_shared_key_setup(dev, i, k, NULL);
+
+		mt76x2_mac_set_ext_mac(dev, i, NULL);
+	}
 
 	for (i = 0; i < 8; i++) {
 		mt76x2_mac_set_bssid(dev, i, null_addr);
@@ -306,6 +312,8 @@ int mt76x2_mac_reset(struct mt76x2_dev *dev, bool hard)
 
 	for (i = 0; i < 16; i++)
 		mt76_rr(dev, MT_TX_STAT_FIFO);
+
+	mt76_set(dev, MT_MAC_APC_BSSID_H(0), MT_MAC_APC_BSSID0_H_EN);
 
 	mt76_wr(dev, MT_CH_TIME_CFG,
 		MT_CH_TIME_CFG_TIMER_EN |
@@ -795,7 +803,7 @@ int mt76x2_register_device(struct mt76x2_dev *dev)
 	struct wiphy *wiphy = hw->wiphy;
 	void *status_fifo;
 	int fifo_size;
-	int ret;
+	int i, ret;
 
 	fifo_size = roundup_pow_of_two(32 * sizeof(struct mt76x2_tx_status));
 	status_fifo = devm_kzalloc(dev->mt76.dev, fifo_size, GFP_KERNEL);
@@ -816,6 +824,20 @@ int mt76x2_register_device(struct mt76x2_dev *dev)
 
 	hw->sta_data_size = sizeof(struct mt76x2_sta);
 	hw->vif_data_size = sizeof(struct mt76x2_vif);
+
+	for (i = 0; i < ARRAY_SIZE(dev->macaddr_list); i++) {
+		u8 *addr = dev->macaddr_list[i].addr;
+
+		memcpy(addr, dev->mt76.macaddr, ETH_ALEN);
+
+		if (!i)
+			continue;
+
+		addr[0] |= BIT(1);
+		addr[0] ^= ((i - 1) << 2);
+	}
+	wiphy->addresses = dev->macaddr_list;
+	wiphy->n_addresses = ARRAY_SIZE(dev->macaddr_list);
 
 	wiphy->iface_combinations = if_comb;
 	wiphy->n_iface_combinations = ARRAY_SIZE(if_comb);
