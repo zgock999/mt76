@@ -391,6 +391,18 @@ wcid_to_sta(struct mt76_wcid *wcid)
 	return container_of(ptr, struct ieee80211_sta, drv_priv);
 }
 
+/* increment with wrap-around */
+static inline int mt76_incr(int val, int size)
+{
+	return (val + 1) & (size - 1);
+}
+
+/* decrement with wrap-around */
+static inline int mt76_decr(int val, int size)
+{
+	return (val - 1) & (size - 1);
+}
+
 int mt76_tx_queue_skb(struct mt76_dev *dev, struct mt76_queue *q,
 		      struct sk_buff *skb, struct mt76_wcid *wcid,
 		      struct ieee80211_sta *sta);
