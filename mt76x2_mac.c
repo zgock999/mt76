@@ -42,7 +42,7 @@ void mt76x2_mac_set_ext_mac(struct mt76x2_dev *dev, u8 idx, const u8 *addr)
 }
 
 static int
-mt76x2_mac_process_rate(struct ieee80211_rx_status *status, u16 rate)
+mt76x2_mac_process_rate(struct mt76_rx_status *status, u16 rate)
 {
 	u8 idx = FIELD_GET(MT_RXWI_RATE_INDEX, rate);
 
@@ -270,32 +270,83 @@ void mt76x2_mac_write_txwi(struct mt76x2_dev *dev, struct mt76x2_txwi *txwi,
 	txwi->len_ctl = cpu_to_le16(skb->len);
 }
 
-static void mt76x2_remove_hdr_pad(struct sk_buff *skb)
+static void mt76x2_remove_hdr_pad(struct sk_buff *skb, int len)
 {
-	int len = ieee80211_get_hdrlen_from_skb(skb);
+	int hdrlen;
 
-	memmove(skb->data + 2, skb->data, len);
-	skb_pull(skb, 2);
+	if (!len)
+		return;
+
+	hdrlen = ieee80211_get_hdrlen_from_skb(skb);
+	memmove(skb->data + len, skb->data, hdrlen);
+	skb_pull(skb, len);
+}
+
+static struct mt76_wcid *
+mt76x2_rx_get_sta_wcid(struct mt76x2_dev *dev, u8 idx, bool unicast)
+{
+	struct mt76x2_sta *sta;
+	struct mt76_wcid *wcid;
+
+	if (idx >= ARRAY_SIZE(dev->wcid))
+		return NULL;
+
+	wcid = rcu_dereference(dev->wcid[idx]);
+	if (unicast || !wcid)
+		return wcid;
+
+	sta = container_of(wcid, struct mt76x2_sta, wcid);
+	return &sta->vif->group_wcid;
 }
 
 int mt76x2_mac_process_rx(struct mt76x2_dev *dev, struct sk_buff *skb,
 			  void *rxi)
 {
-	struct ieee80211_rx_status *status = IEEE80211_SKB_RXCB(skb);
+	struct mt76_rx_status *status = (struct mt76_rx_status *) skb->cb;
 	struct mt76x2_rxwi *rxwi = rxi;
+	u32 rxinfo = le32_to_cpu(rxwi->rxinfo);
 	u32 ctl = le32_to_cpu(rxwi->ctl);
 	u16 rate = le16_to_cpu(rxwi->rate);
+	u16 tid_sn = le16_to_cpu(rxwi->tid_sn);
+	bool unicast = rxwi->rxinfo & cpu_to_le32(MT_RXINFO_UNICAST);
+	int pad_len = 0;
+	u8 pn_len;
+	u8 wcid;
 	int len;
 
-	if (rxwi->rxinfo & cpu_to_le32(MT_RXINFO_L2PAD))
-		mt76x2_remove_hdr_pad(skb);
+	if (rxinfo & MT_RXINFO_L2PAD)
+		pad_len += 2;
 
-	if (rxwi->rxinfo & cpu_to_le32(MT_RXINFO_DECRYPT)) {
+	len = FIELD_GET(MT_RXWI_CTL_MPDU_LEN, ctl);
+	pn_len = FIELD_GET(MT_RXINFO_PN_LEN, rxinfo);
+	if (pn_len) {
+		int offset = ieee80211_get_hdrlen_from_skb(skb) + pad_len;
+		u8 *data = skb->data + offset;
+
+		status->iv[0] = data[7];
+		status->iv[1] = data[6];
+		status->iv[2] = data[5];
+		status->iv[3] = data[4];
+		status->iv[4] = data[1];
+		status->iv[5] = data[0];
+
+		pad_len += pn_len << 2;
+		len -= pn_len << 2;
+	}
+
+	mt76x2_remove_hdr_pad(skb, pad_len);
+
+	wcid = FIELD_GET(MT_RXWI_CTL_WCID, ctl);
+	status->wcid = mt76x2_rx_get_sta_wcid(dev, wcid, unicast);
+
+	if (rxinfo & MT_RXINFO_BA)
+		status->aggr = true;
+
+	if (rxinfo & MT_RXINFO_DECRYPT) {
 		status->flag |= RX_FLAG_DECRYPTED;
 		status->flag |= RX_FLAG_IV_STRIPPED | RX_FLAG_MMIC_STRIPPED;
 	}
 
-	len = FIELD_GET(MT_RXWI_CTL_MPDU_LEN, ctl);
 	if (WARN_ON_ONCE(len > skb->len))
 		return -EINVAL;
 
@@ -306,6 +357,9 @@ int mt76x2_mac_process_rx(struct mt76x2_dev *dev, struct sk_buff *skb,
 	status->signal = max(status->chain_signal[0], status->chain_signal[1]);
 	status->freq = dev->mt76.chandef.chan->center_freq;
 	status->band = dev->mt76.chandef.chan->band;
+
+	status->tid = FIELD_GET(MT_RXWI_TID, tid_sn);
+	status->seqno = FIELD_GET(MT_RXWI_SN, tid_sn);
 
 	return mt76x2_mac_process_rate(status, rate);
 }

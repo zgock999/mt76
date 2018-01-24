@@ -273,6 +273,8 @@ mt76x2_sta_add(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 		goto out;
 	}
 
+	msta->vif = mvif;
+	msta->wcid.sta = 1;
 	msta->wcid.idx = idx;
 	msta->wcid.hw_key_idx = -1;
 	mt76x2_mac_wcid_setup(dev, idx, mvif->idx, sta->addr);
@@ -369,6 +371,7 @@ mt76x2_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 
 		key = NULL;
 	}
+	mt76_wcid_key_setup(&dev->mt76, wcid, key);
 
 	if (!msta) {
 		if (key || wcid->hw_key_idx == idx) {
@@ -486,9 +489,11 @@ mt76x2_ampdu_action(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 
 	switch (action) {
 	case IEEE80211_AMPDU_RX_START:
+		mt76_rx_aggr_start(&dev->mt76, &msta->wcid, tid, *ssn, params->buf_size);
 		mt76_set(dev, MT_WCID_ADDR(msta->wcid.idx) + 4, BIT(16 + tid));
 		break;
 	case IEEE80211_AMPDU_RX_STOP:
+		mt76_rx_aggr_stop(&dev->mt76, &msta->wcid, tid);
 		mt76_clear(dev, MT_WCID_ADDR(msta->wcid.idx) + 4,
 			   BIT(16 + tid));
 		break;

@@ -131,7 +131,7 @@ mt76_write_mac_initvals(struct mt76x2_dev *dev)
 		{ MT_RX_FILTR_CFG,		0x00015f97 },
 		{ MT_LEGACY_BASIC_RATE,		0x0000017f },
 		{ MT_HT_BASIC_RATE,		0x00004003 },
-		{ MT_PN_PAD_MODE,		0x00000002 },
+		{ MT_PN_PAD_MODE,		0x00000003 },
 		{ MT_TXOP_HLDR_ET,		0x00000002 },
 		{ 0xa44,			0x00000000 },
 		{ MT_HEADER_TRANS_CTRL_REG,	0x00000000 },
@@ -621,6 +621,8 @@ void mt76x2_stop_hardware(struct mt76x2_dev *dev)
 
 void mt76x2_cleanup(struct mt76x2_dev *dev)
 {
+	tasklet_disable(&dev->dfs_pd.dfs_tasklet);
+	tasklet_disable(&dev->pre_tbtt_tasklet);
 	mt76x2_stop_hardware(dev);
 	mt76x2_dma_cleanup(dev);
 	mt76x2_mcu_cleanup(dev);
@@ -847,6 +849,8 @@ int mt76x2_register_device(struct mt76x2_dev *dev)
 	wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_VHT_IBSS);
 
 	ieee80211_hw_set(hw, SUPPORTS_HT_CCK_RATES);
+	ieee80211_hw_set(hw, SUPPORTS_REORDERING_BUFFER);
+
 	INIT_DELAYED_WORK(&dev->cal_work, mt76x2_phy_calibrate);
 	INIT_DELAYED_WORK(&dev->mac_work, mt76x2_mac_work);
 
