@@ -71,7 +71,10 @@ mt76x2u_set_channel(struct mt76x2_dev *dev,
 	mt76_set_channel(&dev->mt76);
 
 	cancel_delayed_work_sync(&dev->cal_work);
-	mt76x2u_mac_stop(dev);
+
+	mt76_clear(dev, MT_TXOP_CTRL_CFG, BIT(20));
+	mt76_clear(dev, MT_TXOP_HLDR_ET, BIT(1));
+	mt76x2_mac_stop(dev, false);
 
 	err = mt76x2u_phy_set_channel(dev, chandef);
 
